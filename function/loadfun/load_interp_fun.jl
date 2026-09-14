@@ -1,0 +1,10 @@
+
+include("/home/hsinyi/Documents/Julia/function/zlevs3.jl")   # path relative to where you launch julia (your Documents/Julia folder)
+include("/home/hsinyi/Documents/Julia/function/depth_slice.jl")
+include("/home/hsinyi/Documents/Julia/function/uvp_masks.jl")
+include("/home/hsinyi/Documents/Julia/function/rho2uvp.jl")
+include("/home/hsinyi/Documents/Julia/function/uv2rho.jl")
+include("/home/hsinyi/Documents/Julia/function/interp_1d.jl")
+include("/home/hsinyi/Documents/Julia/function/interp_2d.jl")
+include("/home/hsinyi/Documents/Julia/function/interp_3d.jl")
+include("/home/hsinyi/Documents/Julia/function/interp_bry.jl")

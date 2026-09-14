@@ -1,0 +1,35 @@
+# Julia
+/deps/build.log
+*.jl.cov
+*.jl.mem
+/docs/build/
+/docs/site/
+Manifest.toml.bak
+
+# Logs
+*.log
+*.log.*
+logs/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Large / binary data files (uncomment or adjust as needed)
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.dat
+*.h5
+*.hdf5
+*.csv.gz
+*.bin
+
+# Julia environment cache
+.julia/
