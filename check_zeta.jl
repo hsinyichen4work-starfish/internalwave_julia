@@ -5,12 +5,12 @@ using NCDatasets, PyPlot, Dates, ColorSchemes, Statistics
 cmap_thermal = PyPlot.matplotlib.colors.ListedColormap([[c.r, c.g, c.b] for c in colorschemes[:thermal]])
 cmap_speed = PyPlot.matplotlib.colors.ListedColormap([[c.r, c.g, c.b] for c in colorschemes[:speed]])
 
-include("/home/hsinyi/Documents/Julia/function/load_all.jl")
+include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
 # path relative to where you launch julia (your Documents/Julia folder)
 
-grid_fname = "/home/hsinyi/roms_data/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/home/hsinyi/figure/20260914_julia_outputtest"
+grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
+datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry_2"   # HPC output dir — contains avg/dia/his/rst files mixed together
+figure_path = "/home/hchen54/figure/dbry900m"
 
 ##
 mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
@@ -26,12 +26,17 @@ lon_psi, lat_psi = rho2p(lon_rho), rho2p(lat_rho)   # no native lon_psi/lat_psi 
 # to just the "his" files (they carry zeta/temp/u/v, everything the plots
 # below need) — sorted so files are processed in chronological order,
 # which works here because the filenames embed a sortable timestamp
-his_files = sort(filter(f -> occursin("roms_his", basename(f)) && endswith(f, ".nc"), readdir(datadir, join=true)))
-println("found $(length(his_files)) his files in $datadir")
+# files = sort(filter(f -> occursin("roms_avg", basename(f)) && endswith(f, ".nc"), readdir(datadir, join=true)))
+# files = [joinpath(datadir, "roms_avg.20220908210000.nc")]
+files = sort(filter(f -> occursin("roms_avg", basename(f)) &&
+                         endswith(f, ".nc") &&
+                         basename(f) <= "roms_avg.20220923210000.nc",
+                    readdir(datadir, join=true)))
+println("found $(length(files)) avg files in $datadir")
 
 skip = 30   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
 
-for fname in his_files
+for fname in files
 
     ocean_time = NCDataset(fname) do ds
         ds["ocean_time"][:]
@@ -148,7 +153,7 @@ for fname in his_files
 
         fig, axs = subplots(1, 2, figsize = (14, 6))
         for (ax, field, depth_label) in ((axs[1], temp_1m, "1 m"), (axs[2], temp_10m, "10 m"))
-            pc = ax.pcolormesh(lon_rho, lat_rho, field, shading = "auto", cmap = cmap_thermal)
+            pc = ax.pcolormesh(lon_rho, lat_rho, field, shading = "auto", cmap = cmap_thermal, vmin = 24, vmax = 30)
             ax.set_aspect("equal")
             ax.set_xlabel("Longitude")
             ax.set_ylabel("Latitude")
@@ -203,6 +208,7 @@ for fname in his_files
 
         outname = joinpath(figure_path, "vorticity_plot_$(str2[t]).png")
         savefig(outname)
+        #outname = joinpath(figure_path, "vorticity_plot_$(str2[t]).html")
         println("saved plot to ", outname)
         close(fig)
     end
