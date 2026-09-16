@@ -27,6 +27,15 @@ function plot_curvilinear!(ax, x, y, data; kwargs...)
     return surface!(ax, x, y, zeros(size(data)); color = data, shading = NoShading, kwargs...)
 end
 
+# Perimeter of a curvilinear grid (bottom row, right column, top row
+# reversed, left column reversed) as one closed loop — for overlaying a
+# child-grid outline on top of a parent-grid plot.
+function grid_boundary(x::AbstractMatrix, y::AbstractMatrix)
+    bx = vcat(x[:, 1], x[end, 2:end], reverse(x[1:end-1, end]), reverse(x[1, 1:end-1]))
+    by = vcat(y[:, 1], y[end, 2:end], reverse(y[1:end-1, end]), reverse(y[1, 1:end-1]))
+    return bx, by
+end
+
 # quiver arrows on top of a topdown_axis3 plot — arrows2d! is the current
 # Makie quiver function (arrows! is deprecated). We flatten everything to
 # vectors and add an explicit z=0 / w=0 so it plots flat inside the 3D axis.

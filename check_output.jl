@@ -62,6 +62,11 @@ lon_rho[lon_rho .> 180] .-= 360   # convert 0-360 convention to -180/180 (east/w
 _, _, mask_p = uvp_masks(mask_rho)
 lon_psi, lat_psi = rho2p(lon_rho), rho2p(lat_rho)   # no native lon_psi/lat_psi in this grid file — approximate via corner averaging
 
+# h here is the ROMS grid's own bathymetry (positive-down, no missing values),
+# already on the same lon_rho/lat_rho grid as everything plotted below — unlike
+# check_NCOM_comp.jl, no sign flip / coalesce-to-NaN is needed before contouring.
+bathy_levels = [500, 1000, 2000]
+
 
 # the HPC output dir mixes roms_avg/dia/his/rst files together, so filter
 # to just the "his" files (they carry zeta/temp/u/v, everything the plots
@@ -200,6 +205,8 @@ for fname in files
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, zeta_masked[:, :, t];
                                     colormap = Reverse(:RdBu), colorrange = (-1, 1))
             Colorbar(fig[1, 2], sp, label = "meters")
+            contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
+                     color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             save(outname_zeta, fig)
             println("saved plot to ", outname_zeta)
         end
@@ -221,6 +228,8 @@ for fname in files
                 sp = plot_curvilinear!(ax, lon_rho, lat_rho, field;
                                         colormap = :thermal, colorrange = (24, 30))
                 Colorbar(fig[1, 2col], sp, label = "°C")
+                contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
+                         color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             end
             save(outname_temp, fig)
             println("saved plot to ", outname_temp)
@@ -239,6 +248,8 @@ for fname in files
             ax = topdown_axis3(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, speed_1m; colormap = :speed)
             Colorbar(fig[1, 2], sp, label = "m/s")
+            contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
+                     color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
                                  skip = skip, lengthscale = 0.5, color = :black)
             save(outname_speed, fig)
@@ -264,6 +275,8 @@ for fname in files
             sp = plot_curvilinear!(ax, lon_psi, lat_psi, vor_1m;
                                     colormap = Reverse(:RdBu), colorrange = (-clim, clim))
             Colorbar(fig[1, 2], sp, label = "s⁻¹")
+            contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
+                     color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
                                  skip = skip, lengthscale = 0.5, color = :black)
             save(outname_vor, fig)

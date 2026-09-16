@@ -15,7 +15,12 @@
 # surface (e.g. -1.0 for 1 m depth, -10.0 for 10 m depth) — matching
 # ROMS's z convention (z=0 at the surface).
 
-include(joinpath(@__DIR__, "interp_1d.jl"))
+# Re-including this file (e.g. re-running a script in a live REPL) would
+# otherwise redefine the Interp1D module and `using` it again, leaving
+# two distinct modules both bound to Main's `interp_1d` — Julia then
+# refuses to resolve it ("both Interp1D and Interp1D export interp_1d").
+# Guarding the include makes it load-once-per-session instead.
+isdefined(@__MODULE__, :Interp1D) || include(joinpath(@__DIR__, "interp_1d.jl"))
 using .Interp1D
 
 function slice_at_depth(z::AbstractArray{<:Real,3}, F::AbstractArray{<:Real,3}, target_depth::Real)
@@ -23,6 +28,32 @@ function slice_at_depth(z::AbstractArray{<:Real,3}, F::AbstractArray{<:Real,3}, 
     out = fill(NaN32, M, L)
     for j in 1:L, i in 1:M
         out[i, j] = interp_1d(view(z, i, j, :), view(F, i, j, :), [target_depth])[1]
+    end
+    return out
+end
+
+# Same idea as slice_at_depth, but for NCOM's zm3/kb vertical grid instead
+# of a ROMS sigma-coordinate z. Two things differ from the ROMS case:
+#  - zm3 is stored shallow-to-deep (descending z: ~-0.5 m at k=1, more
+#    negative going down) — the opposite of the ascending order interp_1d
+#    requires — so each column gets reversed rather than being ascending
+#    already like zlevs3's output.
+#  - not every column has all N levels: kb[i,j] gives the number of valid
+#    levels at that horizontal point, and zm3/F are missing/NaN beyond
+#    it (below the seafloor there). So each column is trimmed to
+#    1:kb[i,j] first — passing the fixed-length column straight through
+#    (reversed, with missing/NaN left at the front) would break
+#    interp_1d's ascending scan, which assumes no missing/invalid entries.
+function slice_at_depth_ncom(zm3::AbstractArray{<:Union{Missing,Real},3}, kb::AbstractMatrix,
+                              F::AbstractArray{<:Real,3}, target_depth::Real)
+    M, L, N = size(zm3)
+    out = fill(NaN32, M, L)
+    for j in 1:L, i in 1:M
+        k = kb[i, j]
+        (ismissing(k) || k < 2) && continue   # no usable water column here
+        zcol = Float64.(view(zm3, i, j, k:-1:1))
+        fcol = Float64.(view(F, i, j, k:-1:1))
+        out[i, j] = interp_1d(zcol, fcol, [target_depth])[1]
     end
     return out
 end
