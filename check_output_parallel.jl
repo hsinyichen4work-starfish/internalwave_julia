@@ -172,13 +172,12 @@ end
             println("already exists, skipping: ", outname_temp)
         else
             temp_1m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -1.0)
-            temp_10m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -10.0)
+            temp_100m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -100.0)
  
             fig = Figure(size = (1400, 600))
-            for (col, (field, depth_label)) in enumerate(((temp_1m, "1 m"), (temp_10m, "10 m")))
+            for (col, (field, depth_label, crange)) in enumerate(((temp_1m, "1 m", (24, 30)), (temp_100m, "100 m", (15, 30))))
                 ax = topdown_axis3(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
-                sp = plot_curvilinear!(ax, lon_rho, lat_rho, field;
-                                        colormap = :thermal, colorrange = (24, 30))
+                sp = plot_curvilinear!(ax, lon_par, lat_par, field; colormap = :thermal, colorrange = crange)
                 Colorbar(fig[1, 2col], sp, label = "°C")
                 contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                          color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
@@ -203,7 +202,8 @@ end
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
-                                 skip = skip, lengthscale = 0.5, color = :black)
+                                 skip = skip, lengthscale = 0.5, color = :black,
+                                 shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
             save(outname_speed, fig)
             println("saved plot to ", outname_speed)
         end
@@ -230,7 +230,8 @@ end
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
-                                 skip = skip, lengthscale = 0.5, color = :black)
+                                 skip = skip, lengthscale = 0.5, color = :black,
+                                 shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
             save(outname_vor, fig)
             println("saved plot to ", outname_vor)
         end
@@ -259,6 +260,8 @@ pmap(process_file, files; on_error = ex -> println("a file failed: ", ex))
 # in chronological order (filenames sort correctly since str2 timestamps
 # are lexicographically ordered). Requires ffmpeg on PATH — on the HPC
 # you probably need `module load ffmpeg` (or similar) before launching julia.
+
+using FFMPEG_jll
 function make_movie(prefix::String; fps = 4)
     pngs = sort(filter(f -> startswith(basename(f), prefix) && endswith(f, ".png"),
                         readdir(figure_path, join = true)))
@@ -275,7 +278,9 @@ function make_movie(prefix::String; fps = 4)
     end
 
     outname = joinpath(figure_path, "$(prefix)_movie.mp4")
-    run(`ffmpeg -y -r $fps -f concat -safe 0 -i $listfile -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -vcodec libx264 -pix_fmt yuv420p $outname`)
+    FFMPEG_jll.ffmpeg() do ffmpeg_path
+        run(`$ffmpeg_path -y -r $fps -f concat -safe 0 -i $listfile -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -vcodec libx264 -pix_fmt yuv420p $outname`)
+    end
     rm(listfile)
     println("saved movie to ", outname)
 end
