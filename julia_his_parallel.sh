@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=zeta_plots_dist
-#SBATCH --account=uso101
+#SBATCH --job-name=his_plots_dist
+#SBATCH --account=uso102
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=3
-#SBATCH --mem=96G
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=128G
 #SBATCH --time=24:00:00
 #SBATCH --output=his_plots_dist_%j.out
 #SBATCH --error=his_plots_dist_%j.err
@@ -14,4 +14,4 @@
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
  
-julia check_output_parallel.jl  > parallel_fix.log 2>&1  # adjust to wherever you keep the script
+julia check_output_parallel.jl 2>&1 | tee parallel_no_vec.log  # adjust to wherever you keep the script

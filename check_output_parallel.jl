@@ -1,6 +1,6 @@
 using Distributed
 
-n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "5")) - 1)   # -1 reserves a CPU for this main process
+n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "7")) - 1)   # -1 reserves a CPU for this main process
 addprocs(n_workers)
 println("running with $(nprocs() - 1) worker processes")
 
@@ -51,7 +51,7 @@ end
     outname_zeta_last = joinpath(figure_path, "zeta_plot_$(str2[ntime]).png")
     outname_temp_last = joinpath(figure_path, "temp_depth_plot_$(str2[ntime]).png")
     outname_speed_last = joinpath(figure_path, "speed_plot_$(str2[ntime]).png")
-    outname_vor_last = joinpath(figure_path, "vorticity_plot_$(str2[ntime]).png")
+    outname_vor_last = joinpath(figure_path, "vorticity_novec_plot_$(str2[ntime]).png")
  
     if isfile(outname_zeta_last) && isfile(outname_temp_last) &&
        isfile(outname_speed_last) && isfile(outname_vor_last)
@@ -81,7 +81,7 @@ end
     z = zeros(size(zeta, 1), size(zeta, 2), N, ntime)
     Cs = nothing
     for t in 1:ntime
-        z_dum, Cs = zlevs3(h, zeta[:, :, t], theta_s, theta_b, hc, N, "r", "new2006")
+        z_dum, Cs = zlevs3(h, zeta[:, :, t], theta_s, theta_b, hc, N, "r", "new2008")
         z[:, :, :, t] = permutedims(z_dum, (2, 3, 1))
     end
     z_p = rho2p(z)
@@ -177,7 +177,7 @@ end
             fig = Figure(size = (1400, 600))
             for (col, (field, depth_label, crange)) in enumerate(((temp_1m, "1 m", (24, 30)), (temp_100m, "100 m", (15, 30))))
                 ax = topdown_axis3(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
-                sp = plot_curvilinear!(ax, lon_par, lat_par, field; colormap = :thermal, colorrange = crange)
+                sp = plot_curvilinear!(ax, lon_rho, lat_rho, field; colormap = :thermal, colorrange = crange)
                 Colorbar(fig[1, 2col], sp, label = "°C")
                 contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                          color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
@@ -209,7 +209,7 @@ end
         end
  
         # -- VORTICITY --
-        outname_vor = joinpath(figure_path, "vorticity_plot_$(str2[t]).png")
+        outname_vor = joinpath(figure_path, "vorticity_novec_plot_$(str2[t]).png")
         if isfile(outname_vor)
             println("already exists, skipping: ", outname_vor)
         else
@@ -221,7 +221,8 @@ end
             v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
             vor_1m = slice_at_depth(z_p[:, :, :, t], vor_psi_masked[:, :, :, t], -1.0)
  
-            clim = 5 * mean(abs, filter(!isnan, vor_1m))   # symmetric color limits centered on 0
+            # clim = 5 * mean(abs, filter(!isnan, vor_1m))   # symmetric color limits centered on 0
+            clim = 7e-5;
             fig = Figure(size = (800, 600))
             ax = topdown_axis3(fig[1, 1]; title = "Relative vorticity, surface, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_psi, lat_psi, vor_1m;
@@ -229,9 +230,9 @@ end
             Colorbar(fig[1, 2], sp, label = "s⁻¹")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
-            quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
-                                 skip = skip, lengthscale = 0.5, color = :black,
-                                 shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
+            # quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
+            #                      skip = skip, lengthscale = 0.5, color = :black,
+            #                      shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
             save(outname_vor, fig)
             println("saved plot to ", outname_vor)
         end
@@ -288,4 +289,4 @@ end
 make_movie("zeta_plot")
 make_movie("temp_depth_plot")
 make_movie("speed_plot")
-make_movie("vorticity_plot")
+make_movie("vorticity_novec_plot")

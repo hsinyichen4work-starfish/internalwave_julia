@@ -27,7 +27,16 @@ function slice_at_depth(z::AbstractArray{<:Real,3}, F::AbstractArray{<:Real,3}, 
     M, L, N = size(z)
     out = fill(NaN32, M, L)
     for j in 1:L, i in 1:M
-        out[i, j] = interp_1d(view(z, i, j, :), view(F, i, j, :), [target_depth])[1]
+        zcol = view(z, i, j, :)
+        out[i, j] = interp_1d(zcol, view(F, i, j, :), [target_depth])[1]
+        # z is ascending: zcol[1] = deepest (bottom). Anything requested deeper
+        # than that is below the seafloor here — overwrite with NaN regardless
+        # of whatever interp_1d extrapolated. No check needed at the shallow
+        # end: interp_1d's own extrapolation there is exactly the "1 m" value
+        # we want, since the top sigma layer is always valid ocean.
+        if target_depth < zcol[1]
+            out[i, j] = NaN32
+        end
     end
     return out
 end

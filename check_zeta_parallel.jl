@@ -86,7 +86,7 @@ end
         z = zeros(size(temp))
         Cs = nothing
         for t in 1:ntime
-            z_dum, Cs = zlevs3(h, zeta[:, :, t], theta_s, theta_b, hc, N, "r", "new2006")
+            z_dum, Cs = zlevs3(h, zeta[:, :, t], theta_s, theta_b, hc, N, "r", "new2008")
             z[:, :, :, t] = permutedims(z_dum, (2, 3, 1))
         end
         z_p = rho2p(z)

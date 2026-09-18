@@ -39,11 +39,25 @@ end
 # quiver arrows on top of a topdown_axis3 plot — arrows2d! is the current
 # Makie quiver function (arrows! is deprecated). We flatten everything to
 # vectors and add an explicit z=0 / w=0 so it plots flat inside the 3D axis.
-function quiver_curvilinear!(ax, x, y, u, v; skip = 1, lengthscale = 1.0, kwargs...)
+#
+# xlim/ylim (optional, e.g. from `extrema(lon_chd)`) restrict which arrows
+# are kept, applied *after* downsampling by `skip` — useful when the field
+# being plotted spans a much larger domain than the axis is zoomed to
+# (xlims!/ylims!), since arrows outside the view can otherwise still poke
+# in from just past the visible edge, and most of a full-grid `skip` budget
+# would otherwise be spent on arrows the zoom never shows.
+function quiver_curvilinear!(ax, x, y, u, v; skip = 1, lengthscale = 1.0,
+                              xlim = nothing, ylim = nothing, kwargs...)
     xs = vec(x[1:skip:end, 1:skip:end])
     ys = vec(y[1:skip:end, 1:skip:end])
     us = vec(u[1:skip:end, 1:skip:end])
     vs = vec(v[1:skip:end, 1:skip:end])
+
+    keep = .!isnan.(us) .& .!isnan.(vs)
+    xlim !== nothing && (keep .&= xlim[1] .<= xs .<= xlim[2])
+    ylim !== nothing && (keep .&= ylim[1] .<= ys .<= ylim[2])
+    xs, ys, us, vs = xs[keep], ys[keep], us[keep], vs[keep]
+
     zs = zeros(length(xs))
     ws = zeros(length(xs))
     return arrows2d!(ax, xs, ys, zs, us, vs, ws; lengthscale = lengthscale, kwargs...)
