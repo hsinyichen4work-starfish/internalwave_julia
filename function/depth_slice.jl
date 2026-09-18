@@ -54,15 +54,23 @@ end
 #    (reversed, with missing/NaN left at the front) would break
 #    interp_1d's ascending scan, which assumes no missing/invalid entries.
 function slice_at_depth_ncom(zm3::AbstractArray{<:Union{Missing,Real},3}, kb::AbstractMatrix,
-                              F::AbstractArray{<:Real,3}, target_depth::Real)
-    M, L, N = size(zm3)
-    out = fill(NaN32, M, L)
-    for j in 1:L, i in 1:M
-        k = kb[i, j]
-        (ismissing(k) || k < 2) && continue   # no usable water column here
-        zcol = Float64.(view(zm3, i, j, k:-1:1))
-        fcol = Float64.(view(F, i, j, k:-1:1))
-        out[i, j] = interp_1d(zcol, fcol, [target_depth])[1]
+    F::AbstractArray{<:Real,3}, target_depth::Real)
+M, L, N = size(zm3)
+out = fill(NaN32, M, L)
+for j in 1:L, i in 1:M
+    k = kb[i, j]
+    (ismissing(k) || k < 2) && continue   # no usable water column here
+    zcol = Float64.(view(zm3, i, j, k:-1:1))
+    fcol = Float64.(view(F, i, j, k:-1:1))
+    out[i, j] = interp_1d(zcol, fcol, [target_depth])[1]
+    # zcol is ascending after the k:-1:1 reversal: zcol[1] = deepest valid
+    # point in this column (originally at index k). Anything requested
+    # deeper than that is below the seafloor here — mask it out, same
+    # reasoning as slice_at_depth. No check needed at the shallow end for
+    # the same reason as before (shallowest valid cell is always real ocean).
+    if target_depth < zcol[1]
+        out[i, j] = NaN32
     end
+end
     return out
 end

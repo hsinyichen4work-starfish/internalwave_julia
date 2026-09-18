@@ -72,6 +72,7 @@ end
     return ntime, str1, str2
 end
 
+#=
 @everywhere function process_ssh(fname)
     ntime, str1, str2 = ncom_time(fname)
     println(fname, " => ntime = ", ntime)
@@ -122,6 +123,7 @@ end
         println("saved plot to ", outname_zeta)
     end
 end
+=#
 
 @everywhere function process_ts(fname)
     ntime, str1, str2 = ncom_time(fname)
@@ -191,6 +193,7 @@ end
     close(ds_ts)
 end
 
+#=
 @everywhere function process_uv(fname)
     ntime, str1, str2 = ncom_time(fname)
     println(fname, " => ntime = ", ntime)
@@ -329,20 +332,22 @@ end
 
     close(ds_uv)
 end
+=#
 
 # dispatches on the type tag attached to each entry of `tasks` below —
 # ssh/temp/uv come from entirely separate files for NCOM (unlike ROMS's
 # single his.nc carrying zeta/temp/u/v together), so there's no shared
 # read to lose by mixing all three types into one flat pmap list.
 @everywhere function process_file((kind, fname))
+    #=
     if kind == :ssh
         process_ssh(fname)
-    elseif kind == :ts
-        process_ts(fname)
     elseif kind == :uv
         process_uv(fname)
-    else
-        error("unknown file kind: $kind")
+    end
+    =#
+    if kind == :ts
+        process_ts(fname)
     end
 end
 
@@ -351,22 +356,24 @@ end
 # file immediately pick up the next available job regardless of type,
 # instead of a worker dedicated to one variable sitting idle once its
 # own queue drains early while the other queues still have a backlog.
+#=
 files_ssh = sort(filter(f -> endswith(f, "_ssh.nc") &&
                          "2022082400_ssh.nc" <= basename(f) <= "2022092300_ssh.nc",
 #                         "2022082400_ssh.nc" <= basename(f) <= "2022082400_ssh.nc",
                     readdir(datadir, join=true)))
+=#
 files_ts = sort(filter(f -> endswith(f, "_ts.nc") &&
                          "2022082400_ts.nc" <= basename(f) <= "2022092300_ts.nc",
 #                         "2022082400_ts.nc" <= basename(f) <= "2022082400_ts.nc",
                     readdir(datadir, join=true)))
+#=
 files_uv = sort(filter(f -> endswith(f, "_uv.nc") &&
                          "2022082400_uv.nc" <= basename(f) <= "2022092300_uv.nc",
 #                         "2022082400_uv.nc" <= basename(f) <= "2022082400_uv.nc",
                     readdir(datadir, join=true)))
+=#
 
-tasks = vcat([(:ssh, f) for f in files_ssh],
-             [(:ts, f) for f in files_ts],
-             [(:uv, f) for f in files_uv])
-println("found $(length(tasks)) files total ($(length(files_ssh)) ssh, $(length(files_ts)) ts, $(length(files_uv)) uv)")
+tasks = [(:ts, f) for f in files_ts]
+println("found $(length(tasks)) files total ($(length(files_ts)) ts)")
 
 pmap(process_file, tasks; on_error = ex -> println("a file failed: ", ex))
