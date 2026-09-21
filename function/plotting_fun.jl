@@ -12,10 +12,14 @@ using CairoMakie
 # field through `color`. Viewed from directly overhead with perspective
 # turned off, this reproduces what pcolormesh draws — including the true
 # rotated quadrilateral cells — without needing any extra packages.
-function topdown_axis3(pos; title = "", xlabel = "Longitude", ylabel = "Latitude")
+function topdown_axis3(pos; title = "", xlabel = "Longitude", ylabel = "Latitude", aspect = :data,
+                        ylabeloffset = 40)
     return Axis3(pos;
         title = title, xlabel = xlabel, ylabel = ylabel,
-        aspect = :data,                 # equivalent of ax.set_aspect("equal")
+        aspect = aspect,                 # :data is right when x/y share real units (e.g. lon/lat);
+                                          # override for mismatched-unit axes (e.g. time vs depth)
+        ylabeloffset = ylabeloffset,     # 40 is Makie's own default; bump it when tick labels are wide
+                                          # enough to collide with the axis label (e.g. "-150", "-200")
         elevation = pi / 2,             # look straight down the z-axis
         azimuth = -pi / 2,
         perspectiveness = 0,            # orthographic, i.e. no perspective skew
@@ -23,8 +27,15 @@ function topdown_axis3(pos; title = "", xlabel = "Longitude", ylabel = "Latitude
         zlabelvisible = false, zgridvisible = false, zspinesvisible = false)
 end
 
-function plot_curvilinear!(ax, x, y, data; kwargs...)
-    return surface!(ax, x, y, zeros(size(data)); color = data, shading = NoShading, kwargs...)
+function plot_curvilinear!(ax, x, y, data; contour_levels = nothing, contour_color = :black,
+                            contour_linewidth = 1, kwargs...)
+    hm = surface!(ax, x, y, zeros(size(data)); color = data, shading = NoShading, kwargs...)
+    # contour! (unlike heatmap!) accepts full 2D x/y, so it can trace the
+    # same curvilinear mesh directly — no need for the flat-surface trick
+    if contour_levels !== nothing
+        contour!(ax, x, y, data; levels = contour_levels, color = contour_color, linewidth = contour_linewidth)
+    end
+    return hm
 end
 
 # Perimeter of a curvilinear grid (bottom row, right column, top row

@@ -11,6 +11,10 @@ Manifest.toml.bak
 *.log.*
 logs/
 
+# Slurm job output/error logs
+*.out
+*.err
+
 # OS junk
 .DS_Store
 Thumbs.db

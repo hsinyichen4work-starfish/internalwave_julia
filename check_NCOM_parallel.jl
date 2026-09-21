@@ -193,7 +193,6 @@ end
     close(ds_ts)
 end
 
-#=
 @everywhere function process_uv(fname)
     ntime, str1, str2 = ncom_time(fname)
     println(fname, " => ntime = ", ntime)
@@ -267,7 +266,7 @@ end
 
             fig = Figure(size = (800, 600))
             ax = topdown_axis3(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
-            sp = plot_curvilinear!(ax, lon_par, lat_par, speed_1m; colormap = :speed)
+            sp = plot_curvilinear!(ax, lon_par, lat_par, speed_1m; colormap = :speed, colorrange = (0, 2))
             Colorbar(fig[1, 2], sp, label = "m/s")
             contour!(ax, lon_par_f, lat_par_f, depth_par; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
@@ -304,13 +303,10 @@ end
             vor_psi_masked = ifelse.(mask_p .== 0, NaN32, vor_psi)
             vor_1m = slice_at_depth_ncom(zm3_p, kb_p, vor_psi_masked, -1.0)
 
-            finite_vor = filter(!isnan, vor_1m)
-            clim = isempty(finite_vor) ? 1.0 : 5 * mean(abs, finite_vor)   # symmetric color limits centered on 0
-
             fig = Figure(size = (800, 600))
             ax = topdown_axis3(fig[1, 1]; title = "Relative vorticity, surface, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_psi, lat_psi, vor_1m;
-                                    colormap = Reverse(:RdBu), colorrange = (-clim, clim))
+                                    colormap = Reverse(:RdBu), colorrange = (-5e-5, 5e-5))
             Colorbar(fig[1, 2], sp, label = "s⁻¹")
             contour!(ax, lon_par_f, lat_par_f, depth_par; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
@@ -332,7 +328,6 @@ end
 
     close(ds_uv)
 end
-=#
 
 # dispatches on the type tag attached to each entry of `tasks` below —
 # ssh/temp/uv come from entirely separate files for NCOM (unlike ROMS's
@@ -342,12 +337,12 @@ end
     #=
     if kind == :ssh
         process_ssh(fname)
-    elseif kind == :uv
-        process_uv(fname)
     end
     =#
     if kind == :ts
         process_ts(fname)
+    elseif kind == :uv
+        process_uv(fname)
     end
 end
 
@@ -366,14 +361,13 @@ files_ts = sort(filter(f -> endswith(f, "_ts.nc") &&
                          "2022082400_ts.nc" <= basename(f) <= "2022092300_ts.nc",
 #                         "2022082400_ts.nc" <= basename(f) <= "2022082400_ts.nc",
                     readdir(datadir, join=true)))
-#=
 files_uv = sort(filter(f -> endswith(f, "_uv.nc") &&
                          "2022082400_uv.nc" <= basename(f) <= "2022092300_uv.nc",
 #                         "2022082400_uv.nc" <= basename(f) <= "2022082400_uv.nc",
                     readdir(datadir, join=true)))
-=#
 
 tasks = [(:ts, f) for f in files_ts]
-println("found $(length(tasks)) files total ($(length(files_ts)) ts)")
+append!(tasks, [(:uv, f) for f in files_uv])
+println("found $(length(tasks)) files total ($(length(files_ts)) ts, $(length(files_uv)) uv)")
 
 pmap(process_file, tasks; on_error = ex -> println("a file failed: ", ex))

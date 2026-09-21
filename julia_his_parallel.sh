@@ -4,7 +4,7 @@
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=5
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
 #SBATCH --output=his_plots_dist_%j.out
@@ -14,4 +14,4 @@
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
  
-julia check_output_parallel.jl 2>&1 | tee parallel_no_vec.log  # adjust to wherever you keep the script
+julia check_output_parallel.jl 2>&1 | tee parallel_wodbry2.log  # adjust to wherever you keep the script
