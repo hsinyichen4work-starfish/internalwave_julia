@@ -1,6 +1,6 @@
 using Distributed
 
-n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "6")) - 1)   # -1 reserves a CPU for this main process
+n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "4")) - 1)   # -1 reserves a CPU for this main process
 # default of 6 (-> 5 workers) is sized for this workstation's RAM, not core count —
 # each worker keeps its own full copy of the grid arrays plus ~1.3GB/timestep of
 # u/v/temp data, so more workers means more concurrent memory, not just more CPU.
@@ -29,8 +29,8 @@ println("running with $(nprocs() - 1) worker processes")
     lon_chd_lims = extrema(lon_chd)   # child-grid extent, to zoom parent-grid plots to it (xlim/ylim equivalent)
     lat_chd_lims = extrema(lat_chd)
 
-    lon_par, lat_par, h_par, angle_par, mask, zm3, kb, dx_par, dy_par = NCDataset(parent_grid) do ds
-        ds["lon"][:, :], ds["lat"][:, :], ds["h"][:,:], ds["ang"][:,:],
+    lon_par, lat_par, h_par, mask, zm3, kb, dx_par, dy_par = NCDataset(parent_grid) do ds
+        ds["lon"][:, :], ds["lat"][:, :], ds["h"][:,:],
         ds["mask"][:, :], ds["zm3"][:,:,:], ds["kb"][:,:], ds["dx"][:,:], ds["dy"][:,:]
     end
     # h is negative-down (~-5 to -5078 m) with `missing` over land — contour!
@@ -42,11 +42,11 @@ println("running with $(nprocs() - 1) worker processes")
 
     # -- grid metrics for speed/vorticity (see check_output_parallel.jl) --
     # NCOM's u_velocity/v_velocity sit on the same (unstaggered) grid as
-    # lon_par/lat_par/mask, unlike ROMS's C-grid u/v — so no u2rho/v2rho
-    # averaging is needed before computing speed. vorticity_cal still auto-
-    # converts them onto native U/V points internally since they're passed
-    # in at "RHO-grid" size.
-    angle_par_rad = deg2rad.(coalesce.(angle_par, 0.0f0))   # "ang" is in degrees here, unlike ROMS's angle (radians)
+    # lon_par/lat_par/mask, unlike ROMS's C-grid u/v, and are already given
+    # as true east/north components (unlike ROMS's grid-relative u/v) — so
+    # no u2rho/v2rho averaging or rotation is needed before computing speed.
+    # vorticity_cal still auto-converts them onto native U/V points
+    # internally since they're passed in at "RHO-grid" size.
     pm_par = 1 ./ coalesce.(dx_par, Inf32)                  # ROMS-style inverse grid spacing (1/meters)
     pn_par = 1 ./ coalesce.(dy_par, Inf32)
     _, _, mask_p = uvp_masks(mask)
@@ -243,14 +243,13 @@ end
         zidx = reshape(1:size(u_t, 3), 1, 1, :)
         land_or_below = (mask .== 0) .| (zidx .> kb0)
 
-        # speed is rotation-invariant; u_east/v_north (for the quiver arrows)
-        # need rotating out of the grid's local xi/eta directions into true
-        # east/north using the grid's rotation angle
+        # NCOM's u_velocity/v_velocity are already true east/north
+        # components, so no rotation is needed before masking (speed would
+        # be rotation-invariant anyway, but the quiver arrows below need
+        # the un-rotated east/north components too).
         speed_masked = ifelse.(land_or_below, NaN32, sqrt.(u_t .^ 2 .+ v_t .^ 2))
-        u_east = u_t .* cos.(angle_par_rad) .- v_t .* sin.(angle_par_rad)
-        v_north = u_t .* sin.(angle_par_rad) .+ v_t .* cos.(angle_par_rad)
-        u_east_masked = ifelse.(land_or_below, NaN32, u_east)
-        v_north_masked = ifelse.(land_or_below, NaN32, v_north)
+        u_east_masked = ifelse.(land_or_below, NaN32, u_t)
+        v_north_masked = ifelse.(land_or_below, NaN32, v_t)
 
         # -- SPEED -- saved twice: once with the color field alone (novec,
         # easiest to read the speed itself), then again with quiver arrows
