@@ -1,4 +1,4 @@
-using CairoMakie
+using CairoMakie, Dates
 
 # Your ROMS grid is curvilinear (lon_rho/lat_rho are full 2D fields, not
 # separable 1D axes) — that's exactly why the old code used PyPlot's
@@ -36,6 +36,23 @@ function plot_curvilinear!(ax, x, y, data; contour_levels = nothing, contour_col
         contour!(ax, x, y, data; levels = contour_levels, color = contour_color, linewidth = contour_linewidth)
     end
     return hm
+end
+
+# One panel of a curvilinear 2D field where the y-coordinate itself varies
+# in 2D — e.g. ROMS z-levels, which shift with the tide via zeta, not a
+# plain rectilinear heatmap. Combines topdown_axis3 + plot_curvilinear! +
+# optional ylims! into a single call for the common case of a grid of such
+# panels sharing one Colorbar (side views, time-vs-depth comparisons, etc.).
+# Returns (ax, hm) — hm so the caller can wire up a shared Colorbar.
+function curvilinear_panel!(fig_pos, x, y, data; colormap, colorrange, contour_levels = nothing,
+                             contour_color = RGBf(0.6, 0.6, 0.6), title = "", xlabel = "", ylabel = "",
+                             aspect = (3, 1, 1), ylabeloffset = 40, ylims = nothing)
+    ax = topdown_axis3(fig_pos; title = title, xlabel = xlabel, ylabel = ylabel,
+        aspect = aspect, ylabeloffset = ylabeloffset)
+    hm = plot_curvilinear!(ax, x, y, data; colormap = colormap, colorrange = colorrange,
+        contour_levels = contour_levels, contour_color = contour_color)
+    ylims !== nothing && ylims!(ax, ylims...)
+    return ax, hm
 end
 
 # Perimeter of a curvilinear grid (bottom row, right column, top row

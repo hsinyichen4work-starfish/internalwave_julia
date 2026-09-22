@@ -4,8 +4,8 @@
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=5
-#SBATCH --mem=80G
+#SBATCH --cpus-per-task=7
+#SBATCH --mem=32G
 #SBATCH --time=24:00:00
 #SBATCH --output=runcode_%j.out
 #SBATCH --error=runcode_%j.err
@@ -14,4 +14,4 @@
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
  
-julia model_vel_check.jl 2>&1 | tee runcode.log  # adjust to wherever you keep the script
+julia check_sideview.jl 2>&1 | tee runcode.log  # adjust to wherever you keep the script

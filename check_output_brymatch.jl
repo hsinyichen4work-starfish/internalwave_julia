@@ -11,14 +11,7 @@ bry_fname = "/home/hsinyi/roms_data/bry_63/roms_bry_900m_2022090100.nc"
 dbry_fname = "/home/hsinyi/roms_data/bry_dynamic_flux_63/roms_dbry_flux_900m_2022090100.nc"
 
 datadir = "/home/hsinyi/roms_data/output_test"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/home/hsinyi/figure/20260914_julia_outputtest"
-
-# saves go under figure_path/<subfolder>/filename, e.g. figure_path/zeta_east_bry/zeta_east_bry_20220901.png
-function figpath(subfolder, filename)
-    dir = joinpath(figure_path, subfolder)
-    mkpath(dir)
-    return joinpath(dir, filename)
-end
+figure_path = "/home/hsinyi/figure/20260914_julia_outputtest"   # figpath(subfolder, filename) comes from load_all.jl -> load_usefultool_fun.jl
 
 ##
 mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
