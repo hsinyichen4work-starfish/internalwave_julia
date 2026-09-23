@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/home/hsinyi/figure/20260921_output_check2/dbry/bry_match/temp_east_bry";
-movie_path = "/home/hsinyi/figure/20260921_output_check2/dbry/bry_match/movie";
-start_string = "temp_east_bry"
+figure_path = "/home/hchen54/figure/dbry900m/sideview/n_200";
+movie_path = "/home/hchen54/figure/dbry900m/sideview";
+start_string = "sideview_n200"
 
 cd(figure_path)
 readdir(figure_path) 
