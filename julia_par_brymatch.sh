@@ -14,4 +14,4 @@
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
  
-julia check_output_brymatch_hpc.jl 2>&1 | tee dbry_match.log  # adjust to wherever you keep the script
+julia check_output_brymatch_hpc.jl 2>&1 | tee dbry_match_sponge.log  # adjust to wherever you keep the script

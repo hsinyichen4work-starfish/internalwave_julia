@@ -14,4 +14,4 @@
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
  
-julia check_output_parallel.jl 2>&1 | tee parallel_wodbry2.log  # adjust to wherever you keep the script
+julia check_output_parallel_dbry.jl 2>&1 | tee model_output_vsponge.log  # adjust to wherever you keep the script

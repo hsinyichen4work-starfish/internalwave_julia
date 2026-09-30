@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/home/hchen54/figure/dbry900m/sideview/n_200";
-movie_path = "/home/hchen54/figure/dbry900m/sideview";
-start_string = "sideview_n200"
+figure_path = "/home/hchen54/figure/dbry_0927/hisfile";
+movie_path = "/home/hchen54/figure/dbry_0927/";
+start_string = "vorticity_plot"
 
 cd(figure_path)
 readdir(figure_path) 
