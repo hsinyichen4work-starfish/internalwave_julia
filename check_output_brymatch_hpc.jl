@@ -20,9 +20,9 @@ bry_dir = "/expanse/lustre/projects/uso101/hchen54/input/bry"
 bry_fname_for(date)  = joinpath(bry_dir, "roms_bry_900m_$(Dates.format(date, "yyyymmdd"))00.nc")
 dbry_fname_for(date) = joinpath(bry_dir, "roms_dbry_flux_900m_$(Dates.format(date, "yyyymmdd"))00.nc")
 
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_sponge30"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/home/hchen54/figure/dbry_0927_sponge30/bry_match"   # figpath(subfolder, filename) comes from load_all_hpc.jl -> load_usefultool_fun.jl
-
+datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_vsponge_400"   # HPC output dir — contains avg/dia/his/rst files mixed together
+figure_path = "/home/hchen54/figure/dbry_0927_vsponge400/bry_match"   # figpath(subfolder, filename) comes from load_all_hpc.jl -> load_usefultool_fun.jl
+mkpath(figure_path)
 ##
 mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
     ds["mask_rho"][:, :], ds["lon_rho"][:, :], ds["lat_rho"][:, :],

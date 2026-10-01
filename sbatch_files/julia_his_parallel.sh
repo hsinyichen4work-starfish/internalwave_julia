@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=dbry_plots_dist
+#SBATCH --job-name=his_plots_dist
 #SBATCH --account=uso102
 #SBATCH --partition=shared
 #SBATCH --nodes=1
@@ -7,11 +7,12 @@
 #SBATCH --cpus-per-task=5
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
-#SBATCH --output=dbry_plots_dist_%j.out
-#SBATCH --error=dbry_plots_dist_%j.err
+#SBATCH --output=his_plots_dist_%j.out
+#SBATCH --error=his_plots_dist_%j.err
 #SBATCH --mail-user=HsinYi.Chen@usm.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,TIME_LIMIT_90
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
- 
-julia check_output_parallel_dbry.jl 2>&1 | tee parallel_dbry.log  # adjust to wherever you keep the script
+cd /home/hchen54/internalwave_julia
+mkdir -p log_files 
+julia check_output_parallel_dbry.jl 2>&1 | tee log_files/model_output_vsponge.log  # adjust to wherever you keep the script

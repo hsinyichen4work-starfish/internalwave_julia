@@ -13,5 +13,6 @@
 #SBATCH --mail-type=BEGIN,END,FAIL,TIME_LIMIT_90
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
- 
-julia check_output_brymatch_hpc.jl 2>&1 | tee dbry_match_sponge.log  # adjust to wherever you keep the script
+cd /home/hchen54/internalwave_julia
+mkdir -p log_files 
+julia check_output_brymatch_hpc.jl 2>&1 | tee log_files/dbry_match_sponge.log  # adjust to wherever you keep the script
