@@ -6,7 +6,7 @@ include("/home/hchen54/internalwave_julia/function/depth_slice.jl")
 include("/home/hchen54/internalwave_julia/function/uvp_masks.jl")
 include("/home/hchen54/internalwave_julia/function/rho2uvp.jl")
 include("/home/hchen54/internalwave_julia/function/uv2rho.jl")
-include("/home/hchen54/internalwave_julia/function/interp_1d.jl")
+isdefined(@__MODULE__, :Interp1D) || include("/home/hchen54/internalwave_julia/function/interp_1d.jl")   # already loaded by depth_slice.jl — re-including replaces the module and breaks `interp_1d` on a second include of this file
 include("/home/hchen54/internalwave_julia/function/interp_2d.jl")
 include("/home/hchen54/internalwave_julia/function/interp_3d.jl")
 include("/home/hchen54/internalwave_julia/function/interp_bry.jl")

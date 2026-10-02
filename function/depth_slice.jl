@@ -28,7 +28,7 @@ function slice_at_depth(z::AbstractArray{<:Real,3}, F::AbstractArray{<:Real,3}, 
     out = fill(NaN32, M, L)
     for j in 1:L, i in 1:M
         zcol = view(z, i, j, :)
-        out[i, j] = interp_1d(zcol, view(F, i, j, :), [target_depth])[1]
+        out[i, j] = Interp1D.interp_1d(zcol, view(F, i, j, :), [target_depth])[1]
         # z is ascending: zcol[1] = deepest (bottom). Anything requested deeper
         # than that is below the seafloor here — overwrite with NaN regardless
         # of whatever interp_1d extrapolated. No check needed at the shallow
@@ -62,7 +62,7 @@ for j in 1:L, i in 1:M
     (ismissing(k) || k < 2) && continue   # no usable water column here
     zcol = Float64.(view(zm3, i, j, k:-1:1))
     fcol = Float64.(view(F, i, j, k:-1:1))
-    out[i, j] = interp_1d(zcol, fcol, [target_depth])[1]
+    out[i, j] = Interp1D.interp_1d(zcol, fcol, [target_depth])[1]
     # zcol is ascending after the k:-1:1 reversal: zcol[1] = deepest valid
     # point in this column (originally at index k). Anything requested
     # deeper than that is below the seafloor here — mask it out, same
