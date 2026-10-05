@@ -15,4 +15,4 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files 
-julia check_output_parallel_dbry.jl 2>&1 | tee log_files/model_output_vsponge.log  # adjust to wherever you keep the script
+julia check_output_parallel.jl 2>&1 | tee log_files/model_output_3mon.log  # adjust to wherever you keep the script
