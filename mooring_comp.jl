@@ -1,12 +1,12 @@
-using NCDatasets, CairoMakie, Dates, Statistics, GibbsSeaWater
+using NCDatasets, CairoMakie, Dates, Statistics, GibbsSeaWater, DSP
 CairoMakie.activate!()
 include("/home/hsinyi/Documents/Julia/function/load_all.jl")
 include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
 ##
 grid_fname = "/home/hsinyi/roms_data/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/home/hsinyi/figure/20260929_output/dbry_0927/mooring"
-joint_ext_path = "/home/hsinyi/roms_data/mooring_ext_model/dbry_0927/mooring_merged"
+figure_path = "/home/hsinyi/figure/20260929_output/full3mon/mooring"
+joint_ext_path = "/home/hsinyi/roms_data/mooring_ext_model/full_3mon/mooring_merged"
 mooring_path = "/home/hsinyi/data_notm/French_mooring"
 NCOM_mooring_path = "/home/hsinyi/roms_data/NCOM_mooring/NCOM_french.nc"
 mkpath(figure_path)
@@ -25,8 +25,55 @@ theta_s, theta_b, hc = NCDataset(ini_fname) do ds
 end
 ##
 f_mor = NCDataset(mooring_loc) do ds
+    show(ds)
     ds.attrib["french_mor_info"][:]
 end
+##
+mor_loc = NCDataset(mooring_loc) do ds
+    out = Dict{String,NTuple{2,Float64}}()
+    for k in keys(ds.attrib)
+        endswith(k, "_mor_info") || continue
+        m = match(r"location:\((-?[\d.]+);(-?[\d.]+)\)", ds.attrib[k])
+        m === nothing && continue
+        out[replace(k, "_mor_info" => "")] = (parse(Float64, m[1]), parse(Float64, m[2]))
+    end
+    out
+end
+
+##
+# --- bathymetry map with the mooring positions ---
+# The grid is rotated, so lon_rho/lat_rho are 2-D and heatmap! (which needs 1-D regular axes) cannot be used:
+# a flat surface! coloured by h draws every cell at its true lon/lat instead.
+st = 4                                                    # plot every 4th point: much faster, looks the same
+h_plot = Float32.(ifelse.(mask_rho .== 1, h, NaN))        # land -> NaN (left blank)
+fig = Figure(size = (900, 800))
+ax = Axis(fig[1, 1]; xlabel = "Longitude (°E)", ylabel = "Latitude (°N)", aspect = DataAspect(),
+    title = "Bathymetry (ROMS 900 m grid) and mooring positions")
+sf = surface!(ax, lon_rho[1:st:end, 1:st:end], lat_rho[1:st:end, 1:st:end], zeros(Float32, size(h_plot[1:st:end, 1:st:end]));
+    color = h_plot[1:st:end, 1:st:end], colormap = :deep, shading = NoShading)
+Colorbar(fig[1, 2], sf; label = "Depth (m)")
+# isobaths; translate! lifts them above the surface so they are not hidden by it
+ct = contour!(ax, lon_rho[1:st:end, 1:st:end], lat_rho[1:st:end, 1:st:end], h_plot[1:st:end, 1:st:end];
+    levels = [100, 500, 1000], color = RGBf(0.4, 0.4, 0.4), linewidth = 1)
+translate!(ct, 0, 0, 1)
+# one colour per mooring type: french / M1–M4 / CPIES1–9
+mor_groups = (("French", n -> n == "french", :red), ("M", n -> startswith(n, "M"), :orange),
+              ("CPIES", n -> startswith(n, "CPIES"), :magenta))
+for (label, ingroup, color) in mor_groups
+    names = sort([n for n in keys(mor_loc) if ingroup(n)])
+    isempty(names) && continue
+    lons, lats = [mor_loc[n][1] for n in names], [mor_loc[n][2] for n in names]
+    sc = scatter!(ax, lons, lats; color = color, strokecolor = :white, strokewidth = 1, markersize = 10, label = label)
+    tx = text!(ax, lons, lats; text = names, offset = (5, 5), fontsize = 11, color = :white)
+    translate!(sc, 0, 0, 2); translate!(tx, 0, 0, 2)
+end
+axislegend(ax; position = :rb)
+outname = joinpath(figure_path, "bathymetry_moorings.png")
+save(outname, fig)
+println("saved ", outname)
+fig
+
+##
 fname = joinpath(joint_ext_path, "french.nc")
 ocean_time, zeta, temp, salt, u, v = NCDataset(fname) do ds
     # Julia reads dims reversed: zeta is (np, time), 3-D vars are (np, s_rho, time); np = 1 so drop it
@@ -234,7 +281,7 @@ src_colors = (mooring = :black, roms = "#2a78d6", ncom = "#eb6834")   # same col
 # Time-vs-depth heatmaps, one panel per data source, sharing the axes and the colour scale.
 # panels = ((title, time, z, field), …) with z and field of size (nz, nt); zlim = (shallow, deep) in m.
 function plot_time_depth(panels; zlim, clim, colormap, levels, cblabel, title, fname,
-                         contour_color = (:white, 0.6), ctd_lines = false)
+                         contour_color = (:white, 0.6), ctd_lines = false, contours = true)
     zg = zlim[1]:2.0:zlim[2]
     fig = Figure(size = (1100, 900))
     axs, hms = Axis[], []
@@ -243,7 +290,7 @@ function plot_time_depth(panels; zlim, clim, colormap, levels, cblabel, title, f
             yreversed = true, xticks = xticks, xgridvisible = false, ygridvisible = false)
         fg = to_zgrid(z, f, zg)
         push!(hms, heatmap!(ax, tday(time), zg, fg'; colormap = colormap, colorrange = clim))
-        contour!(ax, tday(time), zg, fg'; levels = levels, color = contour_color, linewidth = 0.8)
+        contours && contour!(ax, tday(time), zg, fg'; levels = levels, color = contour_color, linewidth = 0.8)
         push!(axs, ax)
     end
     if ctd_lines                         # where the CTDs actually were (first panel = mooring)
@@ -291,6 +338,57 @@ function plot_lines(panel_titles, sources; ylabel, title, fname, zeroline = fals
 end
 
 ##
+# --- filtering: low-pass, high-pass and envelope of the high-pass, reused for every variable ---
+Tcut = 28.0                # low/high-pass cutoff period (HOURS)
+Tenv = 60.0                # low-pass cutoff period of the envelope (HOURS)
+filt_order = 4
+
+# Butterworth + filtfilt needs an evenly sampled series with no NaN, so for each row of a (npanel, nt) field:
+# keep only the span between the first and last valid sample, fill the gaps inside it by linear interpolation
+# in time, filter, then put NaN back where the data were missing. Values next to a long gap are less reliable.
+# kind = "low" or "high" with Tcut one cutoff period, or kind = "band" with Tcut = (shortest, longest) period.
+function filter_rows(time, f, Tcut, kind; N = filt_order)
+    dt = median(diff(tday(time))) * 24             # sampling interval (hours), same unit as Tcut
+    out = fill(NaN, size(f))
+    for k in axes(f, 1)
+        good = findall(!isnan, f[k, :])
+        length(good) < 2 && continue
+        y = f[k, good[1]:good[end]]
+        for (a, b) in zip(good[1:end-1] .- good[1] .+ 1, good[2:end] .- good[1] .+ 1)   # fill the gaps
+            for i in a+1:b-1
+                y[i] = y[a] + (y[b] - y[a]) * (i - a) / (b - a)
+            end
+        end
+        yf = kind == "band" ? bandpass_butter(y, Tcut[1], Tcut[2], dt, N) : lowhighpass_butter(y, Tcut, dt, N, kind)
+        out[k, good] = yf[good .- good[1] .+ 1]
+    end
+    return out
+end
+
+# Envelope of the high-passed signal: sqrt( lowpass( hp^2 ) ).
+# This is the running RMS amplitude of the high-frequency signal (a pure sine of amplitude A gives A/√2).
+# The low-pass of hp^2 can ring slightly below zero, so it is clamped at 0 before the square root.
+function hp_envelope(time, f)
+    hp = filter_rows(time, f, Tcut, "high")
+    return sqrt.(max.(filter_rows(time, hp .^ 2, Tenv, "low"), 0))
+end
+
+# The three filtered versions of a plot_lines figure: low-passed, high-passed, envelope of the high-pass.
+# sources = the same ((label, time, field, color), …) as plot_lines; title and fname are the stems of the
+# unfiltered figure, e.g. "Temperature at the CTDs" and "temp_lines_at_ctd".
+function plot_filtered(panel_titles, sources; ylabel, title, fname)
+    tc, te = round(Int, Tcut), round(Int, Tenv)
+    apply(g) = Tuple((label, time, g(time, f), color) for (label, time, f, color) in sources)
+    plot_lines(panel_titles, apply((t, f) -> filter_rows(t, f, Tcut, "low")); ylabel = ylabel,
+        title = "$title, $tc h low-passed, $site", fname = "$(fname)_lowpass$(tc)h.png")
+    plot_lines(panel_titles, apply((t, f) -> filter_rows(t, f, Tcut, "high")); ylabel = ylabel, zeroline = true,
+        title = "$title, $tc h high-passed, $site", fname = "$(fname)_highpass$(tc)h.png")
+    plot_lines(panel_titles, apply(hp_envelope); ylabel = "Envelope: $ylabel",
+        title = "$title, envelope of the $tc h high-pass ($te h low-pass), $site",
+        fname = "$(fname)_hp$(tc)h_envelope$(te)h.png")
+end
+
+##
 # ===== temperature and salinity: compared at the 4 CTDs =====
 ctd_titles = map(axes(mooring.z_ts, 1)) do k
     zk = filter(!isnan, mooring.z_ts[k, :])       # depths this instrument really had during the period
@@ -314,7 +412,20 @@ plot_lines(ctd_titles, (
         ("ROMS 900 m (potential T)", roms.time, roms_temp_m, src_colors.roms),
         ("NCOM", ncom.time, ncom_temp_m, src_colors.ncom));
     ylabel = "Temperature (°C)", title = "Temperature at the CTDs, $site", fname = "temp_lines_at_ctd.png")
+plot_lines(ctd_titles, (
+#        ("Mooring CTD (potential T)", mooring.time_ts, mooring.temp, src_colors.mooring),
+        ("ROMS 900 m (potential T)", roms.time, roms_temp_m, src_colors.roms),
+        ("NCOM", ncom.time, ncom_temp_m, src_colors.ncom));
+    ylabel = "Temperature (°C)", title = "Temperature at the CTDs, $site", fname = "temp_lines_at_ctd_model.png")
 
+plot_filtered(ctd_titles, (
+        ("Mooring CTD (potential T)", mooring.time_ts, mooring.temp, src_colors.mooring),
+        ("ROMS 900 m (potential T)", roms.time, roms_temp_m, src_colors.roms),
+        ("NCOM", ncom.time, ncom_temp_m, src_colors.ncom));
+    ylabel = "Temperature (°C)", title = "Temperature at the CTDs", fname = "temp_lines_at_ctd")
+
+
+    
 # --- salinity ---
 plot_time_depth((
         ("Mooring CTD (interpolated between the instruments; lines = instrument depths)",
@@ -331,6 +442,80 @@ plot_lines(ctd_titles, (
         ("ROMS 900 m", roms.time, roms_salt_m, src_colors.roms),
         ("NCOM", ncom.time, ncom_salt_m, src_colors.ncom));
     ylabel = "Salinity (PSU)", title = "Salinity at the CTDs, $site", fname = "salt_lines_at_ctd.png")
+
+plot_lines(ctd_titles, (
+        ("ROMS 900 m", roms.time, roms_salt_m, src_colors.roms),
+        ("NCOM", ncom.time, ncom_salt_m, src_colors.ncom));
+    ylabel = "Salinity (PSU)", title = "Salinity at the CTDs, $site", fname = "salt_lines_at_ctd_model.png")
+
+plot_filtered(ctd_titles, (
+        ("Mooring CTD", mooring.time_ts, mooring.salt, src_colors.mooring),
+        ("ROMS 900 m", roms.time, roms_salt_m, src_colors.roms),
+        ("NCOM", ncom.time, ncom_salt_m, src_colors.ncom));
+    ylabel = "Salinity (PSU)", title = "Salinity at the CTDs", fname = "salt_lines_at_ctd")
+
+# --- where the mooring CTDs were: pressure and depth of each instrument through time ---
+# Both come straight from the CTD file ("pression" and "depth"); one line per instrument, deeper = lower.
+let
+    fig = Figure(size = (1100, 700))
+    cols = Makie.wong_colors()
+    axs = Axis[]
+    for (row, (f, ylabel, ptitle)) in enumerate(((ctd_pres, "Pressure (dbar)", "Pressure"),
+                                                 (mooring.z_ts, "Depth (m)", "Depth")))
+        ax = Axis(fig[row, 1]; title = ptitle, titlealign = :left, ylabel = ylabel, yreversed = true, xticks = xticks)
+        for k in axes(f, 1)
+            lines!(ax, tday(mooring.time_ts), f[k, :]; color = cols[k], linewidth = 1,
+                label = "CTD $(round(Int, nom_depth[k])) m nominal")
+        end
+        push!(axs, ax)
+    end
+    linkxaxes!(axs...)
+    xlims!(axs[end], tday(model_time[1]), tday(model_time[end]))
+    hidexdecorations!(axs[1]; ticks = false, grid = false)
+    axs[end].xlabel = "Date (2022)"
+    Legend(fig[3, 1], axs[1]; orientation = :horizontal, framevisible = false, tellwidth = false)
+    Label(fig[0, :], "Pressure and depth of the mooring CTDs, $site", fontsize = 18, tellwidth = false)
+    outname = joinpath(figure_path, "ctd_pressure_depth.png")
+    save(outname, fig)
+    println("saved ", outname)
+    # zooms: the x axis is already in days since the start of the model run, so the limits are just day numbers
+    for (d0, d1) in ((3, 8), (33, 38))
+        for ax in axs
+            ax.xticks = (d0:d1, Dates.format.(t0 .+ Day.(d0:d1), "mm/dd"))   # one tick per day
+        end
+        xlims!(axs[end], d0, d1)
+        outname = joinpath(figure_path, "ctd_pressure_depth_zoom$(d0)_$(d1).png")
+        save(outname, fig)
+        println("saved ", outname)
+    end
+    fig
+end
+
+# --- where the ADCP bins were: depth of each of the 32 bins through time ---
+# The ADCP file has no pressure, only the bin depths z, so this is one panel. Bin 1 is the deepest (nearest the
+# instrument); all bins move together as the mooring is pulled down. Bins with no data (NaN) are simply not drawn.
+let
+    nbin = size(adcp_z, 1)
+    fig = Figure(size = (1100, 500))
+    ax = Axis(fig[1, 1]; ylabel = "Depth (m)", xlabel = "Date (2022)", yreversed = true, xticks = xticks,
+        title = "Depth of the mooring ADCP bins, $site")
+    for k in 1:nbin
+        lines!(ax, tday(mooring.time_uv), adcp_z[k, :]; color = k, colormap = :viridis, colorrange = (1, nbin), linewidth = 0.8)
+    end
+    Colorbar(fig[1, 2]; colormap = :viridis, limits = (1, nbin), label = "Bin number (1 = deepest)")
+    xlims!(ax, tday(model_time[1]), tday(model_time[end]))
+    outname = joinpath(figure_path, "adcp_bin_depth.png")
+    save(outname, fig)
+    println("saved ", outname)
+    for (d0, d1) in ((3, 8), (33, 38))                 # same zooms as the CTD figure, one tick per day
+        ax.xticks = (d0:d1, Dates.format.(t0 .+ Day.(d0:d1), "mm/dd"))
+        xlims!(ax, d0, d1)
+        outname = joinpath(figure_path, "adcp_bin_depth_zoom$(d0)_$(d1).png")
+        save(outname, fig)
+        println("saved ", outname)
+    end
+    fig
+end
 
 ##
 # ===== velocity (true east / north): compared over the ADCP range =====
@@ -356,6 +541,76 @@ for (name, long, fm, fr, fn) in (("u", "Eastward velocity u", mooring.u, roms.u,
             ("NCOM", ncom.time, to_zgrid(ncom.z, fn, uv_depths), src_colors.ncom));
         ylabel = "$name (m/s)", zeroline = true,
         title = "$long at fixed depths, $site", fname = "$(name)_lines_at_depth.png")
+
+    plot_lines(uv_titles, (
+            ("ROMS 900 m", roms.time, to_zgrid(roms.z, fr, uv_depths), src_colors.roms),
+            ("NCOM", ncom.time, to_zgrid(ncom.z, fn, uv_depths), src_colors.ncom));
+        ylabel = "$name (m/s)", zeroline = true,
+        title = "$long at fixed depths, $site", fname = "$(name)_lines_at_depth_model.png")
+
+    plot_filtered(uv_titles, (
+            ("Mooring ADCP", mooring.time_uv, to_zgrid(mooring.z_uv, fm, uv_depths), src_colors.mooring),
+            ("ROMS 900 m", roms.time, to_zgrid(roms.z, fr, uv_depths), src_colors.roms),
+            ("NCOM", ncom.time, to_zgrid(ncom.z, fn, uv_depths), src_colors.ncom));
+        ylabel = "$name (m/s)", title = "$long at fixed depths", fname = "$(name)_lines_at_depth")
+end
+
+##
+# ===== filtered velocity on a regular depth grid: time-vs-depth heatmaps =====
+# Each source's u and v are put on the same depths (10, 20, …, 400 m), then every depth row is low- and
+# high-passed in time at Tcut. Each source keeps its own time axis. Result: uvf.mooring / uvf.roms / uvf.ncom,
+# each with time, z (nz, nt) and the (nz, nt) matrices u, v, u_lp, u_hp, v_lp, v_hp.
+zg_uv = collect(10.0:10.0:400.0)
+function uv_filtered(time, z, u, v)
+    ug, vg = to_zgrid(z, u, zg_uv), to_zgrid(z, v, zg_uv)
+    return (time = time, z = repeat(zg_uv, 1, length(time)), u = ug, v = vg,
+        u_lp = filter_rows(time, ug, Tcut, "low"), u_hp = filter_rows(time, ug, Tcut, "high"),
+        v_lp = filter_rows(time, vg, Tcut, "low"), v_hp = filter_rows(time, vg, Tcut, "high"))
+end
+uvf = (mooring = uv_filtered(mooring.time_uv, mooring.z_uv, mooring.u, mooring.v),
+       roms    = uv_filtered(roms.time, roms.z, roms.u, roms.v),
+       ncom    = uv_filtered(ncom.time, ncom.z, ncom.u, ncom.v))
+
+zlim_uvf = (zg_uv[1], zg_uv[end])
+uvf_panels(g) = (("Mooring ADCP", uvf.mooring.time, uvf.mooring.z, g(uvf.mooring)),
+                 ("ROMS 900 m", uvf.roms.time, uvf.roms.z, g(uvf.roms)),
+                 ("NCOM", uvf.ncom.time, uvf.ncom.z, g(uvf.ncom)))
+let tc = round(Int, Tcut)
+    # colour limits (m/s): the high-passed current is much weaker than the low-passed one — adjust hp_max if it saturates
+    hp_max = 0.3
+    for (tag, long, cmax, step) in (("lp", "low-passed", 1.5, 0.5), ("hp", "high-passed", hp_max, hp_max / 3))
+        for (name, vlong) in (("u", "Eastward velocity u"), ("v", "Northward velocity v"))
+            plot_time_depth(uvf_panels(s -> getproperty(s, Symbol(name, "_", tag)));
+                zlim = zlim_uvf, clim = (-cmax, cmax), levels = -cmax:step:cmax, colormap = :balance,
+                contour_color = (:black, 0.3), contours = tag != "hp",   # no contour lines on the high-pass: they hide the colours
+                cblabel = "$name (m/s)",
+                title = "$vlong, $tc h $long, at the $site", fname = "$(name)_time_depth_$(tag)$(tc)h.png")
+        end
+        # speed of the filtered current
+        plot_time_depth(uvf_panels(s -> hypot.(getproperty(s, Symbol("u_", tag)), getproperty(s, Symbol("v_", tag))));
+            zlim = zlim_uvf, clim = (0, cmax), levels = 0:step/2:cmax, colormap = :speed,
+            contour_color = (:black, 0.3), cblabel = "Speed (m/s)",
+            title = "Speed of the $tc h $long current at the $site", fname = "speed_time_depth_$(tag)$(tc)h.png")
+    end
+end
+
+# envelope of the high-passed u and v on the depth grid: sqrt( lowpass( hp^2 ) ) with the Tenv low-pass, row by row.
+# Result: uv_hp_env.mooring / .roms / .ncom, each with u and v of size (nz, nt). Always >= 0, so one-sided colours.
+uv_hp_env = map(s -> (u = sqrt.(max.(filter_rows(s.time, s.u_hp .^ 2, Tenv, "low"), 0)),
+                      v = sqrt.(max.(filter_rows(s.time, s.v_hp .^ 2, Tenv, "low"), 0))), uvf)
+let tc = round(Int, Tcut), te = round(Int, Tenv)
+    env_max = 0.2          # colour limit (m/s) — a guess, adjust after the first look
+    for (name, vlong) in (("u", "Eastward velocity u"), ("v", "Northward velocity v"))
+        env(src) = getproperty(getproperty(uv_hp_env, src), Symbol(name))
+        plot_time_depth((
+                ("Mooring ADCP", uvf.mooring.time, uvf.mooring.z, env(:mooring)),
+                ("ROMS 900 m", uvf.roms.time, uvf.roms.z, env(:roms)),
+                ("NCOM", uvf.ncom.time, uvf.ncom.z, env(:ncom)));
+            zlim = zlim_uvf, clim = (0, env_max), levels = 0:env_max/4:env_max, colormap = :amp, contours = false,
+            cblabel = "Envelope of $name (m/s)",
+            title = "$vlong, envelope of the $tc h high-pass ($te h low-pass), at the $site",
+            fname = "$(name)_time_depth_hp$(tc)h_envelope$(te)h.png")
+    end
 end
 
 ##
@@ -377,6 +632,38 @@ plot_lines(uv_titles, (
         ("NCOM", ncom.time, to_zgrid(ncom.z, spd_n, uv_depths), src_colors.ncom));
     ylabel = "Speed (m/s)", title = "Current speed at fixed depths, $site", fname = "speed_lines_at_depth.png")
 
+plot_lines(uv_titles, (
+        ("ROMS 900 m", roms.time, to_zgrid(roms.z, spd_r, uv_depths), src_colors.roms),
+        ("NCOM", ncom.time, to_zgrid(ncom.z, spd_n, uv_depths), src_colors.ncom));
+    ylabel = "Speed (m/s)", title = "Current speed at fixed depths, $site", fname = "speed_lines_at_depth_model.png")
+
+# here the speed series itself is filtered (not the speed of the filtered u and v)
+plot_filtered(uv_titles, (
+        ("Mooring ADCP", mooring.time_uv, to_zgrid(mooring.z_uv, spd_m, uv_depths), src_colors.mooring),
+        ("ROMS 900 m", roms.time, to_zgrid(roms.z, spd_r, uv_depths), src_colors.roms),
+        ("NCOM", ncom.time, to_zgrid(ncom.z, spd_n, uv_depths), src_colors.ncom));
+    ylabel = "Speed (m/s)", title = "Current speed at fixed depths", fname = "speed_lines_at_depth")
+
+# speed of the FILTERED current: filter u and v first, then take the magnitude.
+# The envelope is sqrt( lowpass( hp_u^2 + hp_v^2 ) ): the running RMS speed of the high-frequency current.
+uv_src = (("Mooring ADCP", mooring.time_uv, mooring.z_uv, mooring.u, mooring.v, src_colors.mooring),
+          ("ROMS 900 m", roms.time, roms.z, roms.u, roms.v, src_colors.roms),
+          ("NCOM", ncom.time, ncom.z, ncom.u, ncom.v, src_colors.ncom))
+filt_uv(kind) = Tuple((label, t, filter_rows(t, to_zgrid(z, u, uv_depths), Tcut, kind),
+                       filter_rows(t, to_zgrid(z, v, uv_depths), Tcut, kind), c) for (label, t, z, u, v, c) in uv_src)
+let tc = round(Int, Tcut), te = round(Int, Tenv)
+    for (kind, long) in (("low", "low-passed"), ("high", "high-passed"))
+        plot_lines(uv_titles, Tuple((label, t, hypot.(fu, fv), c) for (label, t, fu, fv, c) in filt_uv(kind));
+            ylabel = "Speed (m/s)", title = "Speed of the $tc h $long current at fixed depths, $site",
+            fname = "speed_of_$(kind)pass$(tc)h_uv_lines_at_depth.png")
+    end
+    plot_lines(uv_titles, Tuple((label, t, sqrt.(max.(filter_rows(t, fu .^ 2 .+ fv .^ 2, Tenv, "low"), 0)), c)
+                                for (label, t, fu, fv, c) in filt_uv("high"));
+        ylabel = "Envelope: Speed (m/s)",
+        title = "Envelope of the $tc h high-passed current speed ($te h low-pass) at fixed depths, $site",
+        fname = "speed_of_hp$(tc)h_uv_envelope$(te)h_lines_at_depth.png")
+end
+
 # time-mean speed at each depth, for a quick number to go with the figures
 nanmean(x) = mean(filter(!isnan, x))
 println("mean speed (m/s)   mooring   ROMS    NCOM")
@@ -385,3 +672,89 @@ for (k, d) in enumerate(uv_depths)
         join((lpad(round(nanmean(to_zgrid(z, s, [d])), digits = 2), 6) for (z, s) in
               ((mooring.z_uv, spd_m), (roms.z, spd_r), (ncom.z, spd_n))), "  "))
 end
+
+
+##
+# ===== velocity split into three frequency bands, for the kinetic energy calculation =====
+# u and v on the regular depth grid zg_uv (uvf.*.u / uvf.*.v), every depth row filtered in time:
+#   lp : 40 h low-pass          (subtidal flow)
+#   bp : 11–13.5 h band-pass    (semidiurnal band)
+#   hp : 10 h high-pass         (higher frequencies)
+# Result: uvk.mooring / uvk.roms / uvk.ncom, each with time, z (nz, nt) and lp, bp, hp, each of which has u and v
+# of size (nz, nt) — e.g. uvk.roms.bp.u. The three bands do not add up to the full signal (10–11 h and 13.5–40 h are left out).
+T_lp, T_bp, T_hp = 40.0, (11.0, 13.5), 10.0       # cutoff periods (HOURS)
+function uv_bands(s)
+    band(kind, T) = (u = filter_rows(s.time, s.u, T, kind), v = filter_rows(s.time, s.v, T, kind))
+    return (time = s.time, z = s.z, lp = band("low", T_lp), bp = band("band", T_bp), hp = band("high", T_hp))
+end
+uvk = (mooring = uv_bands(uvf.mooring), roms = uv_bands(uvf.roms), ncom = uv_bands(uvf.ncom))
+for (name, s) in pairs(uvk)
+    println(name, ": size(lp.u) = ", size(s.lp.u), ", valid points lp/bp/hp = ",
+        join((count(!isnan, b.u) for b in (s.lp, s.bp, s.hp)), " / "))
+end
+
+##
+# ===== eddy kinetic energy of the low-frequency flow =====
+# EKE(z, t) = 0.5 * ((u_lp - ubar)^2 + (v_lp - vbar)^2), per unit mass (m²/s²), where ubar(z), vbar(z) are the
+# time means of the 40 h low-passed u and v at each depth (NaN ignored). The mean is taken over each source's own
+# valid samples, so for the ADCP rows with gaps it covers less of the period than for the models.
+rowmean(a) = [mean(filter(!isnan, a[k, :])) for k in axes(a, 1)]     # time mean of every depth row; NaN if no data
+function eke_lp(s)
+    ubar, vbar = rowmean(s.lp.u), rowmean(s.lp.v)
+    return (time = s.time, z = s.z, ubar = ubar, vbar = vbar,
+        eke = 0.5 .* ((s.lp.u .- ubar) .^ 2 .+ (s.lp.v .- vbar) .^ 2),     # (nz, nt)
+        mke = 0.5 .* (ubar .^ 2 .+ vbar .^ 2))                             # (nz), kinetic energy of the mean flow
+end
+eke = (mooring = eke_lp(uvk.mooring), roms = eke_lp(uvk.roms), ncom = eke_lp(uvk.ncom))
+
+println("time-mean EKE (m²/s²)   mooring    ROMS     NCOM")
+for d in (50.0, 100.0, 200.0, 300.0)         # depths on the 10 m grid zg_uv
+    k = findfirst(==(d), zg_uv)
+    println(lpad(round(Int, d), 6), " m          ",
+        join((lpad(round(rowmean(s.eke)[k], digits = 4), 7) for s in eke), "  "))
+end
+
+size(eke.roms.eke)      # (40, nt) = (depths, times)
+size(eke.mooring.eke)
+size(eke.ncom.eke)
+
+# time-vs-depth heatmap of the EKE, one panel per source (adjust eke_max if the colours saturate or look washed out)
+eke_max = 0.3
+plot_time_depth((
+        ("Mooring ADCP", eke.mooring.time, eke.mooring.z, eke.mooring.eke),
+        ("ROMS 900 m", eke.roms.time, eke.roms.z, eke.roms.eke),
+        ("NCOM", eke.ncom.time, eke.ncom.z, eke.ncom.eke));
+    zlim = zlim_uvf, clim = (0, eke_max), levels = 0:eke_max/6:eke_max, colormap = :amp, contour_color = (:black, 0.3),
+    cblabel = "EKE (m²/s²)", title = "Eddy kinetic energy of the $(round(Int, T_lp)) h low-passed flow at the $site",
+    fname = "eke_time_depth_lp$(round(Int, T_lp))h.png")
+
+
+ke_band(b) = 0.5 .* (b.u .^ 2 .+ b.v .^ 2)        # (nz, nt), m²/s²
+ke = map(s -> (time = s.time, z = s.z, bp = ke_band(s.bp), hp = ke_band(s.hp), lp = ke_band(s.lp)), uvk)
+ke_smooth(s, k) = max.(filter_rows(s.time, k, T_lp, "low"), 0)   # 40 h low-pass, clamped at 0
+
+# (band, title, colour limit in m²/s²) — the limits are guesses, adjust them after the first look
+for (band, long, kmax) in ((:lp, "40 h low-passed", 1.0), (:bp, "11–13.5 h band-passed", 0.05), (:hp, "10 h high-passed", 0.02))
+    plot_time_depth((
+            ("Mooring ADCP", ke.mooring.time, ke.mooring.z, getproperty(ke.mooring, band)),
+            ("ROMS 900 m", ke.roms.time, ke.roms.z, getproperty(ke.roms, band)),
+            ("NCOM", ke.ncom.time, ke.ncom.z, getproperty(ke.ncom, band)));
+        zlim = zlim_uvf, clim = (0, kmax), levels = 0:kmax/5:kmax, colormap = :amp, contours = false,
+        cblabel = "KE (m²/s²)", title = "Kinetic energy of the $long flow at the $site",
+        fname = "ke_time_depth_$(band).png")
+end
+    
+# envelope of the high-frequency KE: sqrt( lowpass( ke.hp^2 ) ) with a 24 h low-pass, i.e. the running RMS of the
+# 10 h high-passed KE (m²/s²). The low-pass can ring slightly below zero, so it is clamped at 0 before the square root.
+T_kenv = 24.0              # low-pass cutoff period of the KE envelope (HOURS)
+ke_hp_env = map(s -> sqrt.(max.(filter_rows(s.time, s.hp .^ 2, T_kenv, "low"), 0)), ke)   # e.g. ke_hp_env.roms, (nz, nt)
+
+ke_env_max = 0.02          # colour limit (m²/s²) — a guess, adjust after the first look
+plot_time_depth((
+        ("Mooring ADCP", ke.mooring.time, ke.mooring.z, ke_hp_env.mooring),
+        ("ROMS 900 m", ke.roms.time, ke.roms.z, ke_hp_env.roms),
+        ("NCOM", ke.ncom.time, ke.ncom.z, ke_hp_env.ncom));
+    zlim = zlim_uvf, clim = (0, ke_env_max), levels = 0:ke_env_max/5:ke_env_max, colormap = :amp, contours = false,
+    cblabel = "KE envelope (m²/s²)",
+    title = "Envelope of the $(round(Int, T_hp)) h high-passed KE ($(round(Int, T_kenv)) h low-pass) at the $site",
+    fname = "ke_hp_envelope$(round(Int, T_kenv))h_time_depth.png")
