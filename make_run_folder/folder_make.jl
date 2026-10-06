@@ -76,9 +76,14 @@ function cppdef_make(c)
 end
 
 function do_joint_make(c)
-    for f in ("joint_multi_job", "joint_output_record.sh")
-        sub_file!(c.new_folder * f, "EXAMPLE_OUTPUT" => c.output_fold)
-    end
+    # Parallel join (ncjoin_mpi), see readme_joint. Only the submitter needs the
+    # output path; joint_output_record_mpi.sh gets its folders as arguments.
+    sub_file!(c.new_folder * "submit_joint_mpi.sh",
+        "BASE=\$EXAMPLE_OUTPUT" => "BASE=" * c.output_fold)
+
+    # Make the export line in the readme copy-pasteable for this run
+    sub_file!(c.new_folder * "readme_joint",
+        "/expanse/lustre/projects/.../<run folder>   (absolute path)" => c.output_fold)
 end
 
 function do_partition_make(c)

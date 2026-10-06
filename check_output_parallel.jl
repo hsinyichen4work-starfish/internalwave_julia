@@ -12,7 +12,7 @@ println("running with $(nprocs() - 1) worker processes")
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
     datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon"   # HPC output dir — contains avg/dia/his/rst files mixed together
-    figure_path = "/home/hchen54/figure/amazon_900m_3mon"
+    figure_path = "/home/hchen54/figure/amazon_900m_3mon/his_rejoint"
 
     ##
     mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
@@ -258,7 +258,7 @@ end
 # files = [joinpath(datadir, "roms_avg.20220908210000.nc")]
 files = sort(filter(f -> occursin("roms_his", basename(f)) &&
                          endswith(f, ".nc") &&
-                         basename(f) <= "roms_his.20220923210000.nc",
+                         basename(f) <= "roms_his.20220930240000.nc",
                     readdir(datadir, join=true)))
 println("found $(length(files)) his files in $datadir")
 # pmap hands files out to whichever worker is free, one at a time, and

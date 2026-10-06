@@ -51,7 +51,7 @@ infile_make(c)
 copy_example("cppdefs.opt")
 cppdef_make(c)
 
-foreach(copy_example, ("joint_multi_job", "joint_output_record.sh", "joint_output"))
+foreach(copy_example, ("submit_joint_mpi.sh", "joint_output_record_mpi.sh", "readme_joint"))
 do_joint_make(c)
 
 foreach(copy_example, ("do_partition.sh", "partition_input"))
