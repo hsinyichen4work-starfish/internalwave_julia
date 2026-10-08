@@ -11,8 +11,8 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
-    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon"   # HPC output dir — contains avg/dia/his/rst files mixed together
-    figure_path = "/home/hchen54/figure/amazon_900m_3mon/his_rejoint"
+    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
+    figure_path = "/home/hchen54/figure/amazon_900m_3mon/his_rerun"
 
     ##
     mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
@@ -34,6 +34,13 @@ println("running with $(nprocs() - 1) worker processes")
 
     skip = 30   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
 
+    # French mooring location (3.95°N, 45.13°W), marked on every map below
+    mooring_lon, mooring_lat = -45.13, 3.95
+    # z = 0 puts it on the same flat plane as plot_curvilinear!'s surface;
+    # overdraw keeps it from being hidden behind that surface
+    add_mooring!(ax) = scatter!(ax, [Point3f(mooring_lon, mooring_lat, 0)];
+                                marker = :star5, markersize = 18, color = :magenta,
+                                strokecolor = :black, strokewidth = 1, overdraw = true)
 
 end
 
@@ -164,6 +171,7 @@ end
             Colorbar(fig[1, 2], sp, label = "meters")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            add_mooring!(ax)
             save(outname_zeta, fig)
             println("saved plot to ", outname_zeta)
         end
@@ -188,6 +196,7 @@ end
                 Colorbar(fig[1, 2col], sp, label = "°C")
                 contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                          color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+                add_mooring!(ax)
             end
             save(outname_temp, fig)
             println("saved plot to ", outname_temp)
@@ -210,6 +219,7 @@ end
             Colorbar(fig[1, 2], sp, label = "m/s")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            add_mooring!(ax)
             quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
                                  skip = skip, lengthscale = 0.5, color = :black,
                                  shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
@@ -241,6 +251,7 @@ end
             Colorbar(fig[1, 2], sp, label = "s⁻¹")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            add_mooring!(ax)
             quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
                                  skip = skip, lengthscale = 0.5, color = :black,
                                  shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
@@ -258,7 +269,7 @@ end
 # files = [joinpath(datadir, "roms_avg.20220908210000.nc")]
 files = sort(filter(f -> occursin("roms_his", basename(f)) &&
                          endswith(f, ".nc") &&
-                         basename(f) <= "roms_his.20220930240000.nc",
+                         basename(f) <= "roms_his.20221130240000.nc",
                     readdir(datadir, join=true)))
 println("found $(length(files)) his files in $datadir")
 # pmap hands files out to whichever worker is free, one at a time, and
