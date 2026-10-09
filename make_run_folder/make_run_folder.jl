@@ -9,9 +9,9 @@
 include(joinpath(@__DIR__, "folder_make.jl"))
 
 ##
-title = "Amazon shelf internal wave simulation 1 month - 900m bry fix "
-fold_name = "amazon_900m_3mon"
-TAG_USE = "900m_3mon"
+title = "Amazon shelf internal wave simulation 3 month - 900m dbry fix (1008) "
+fold_name = "amazon_900m_3mon_1008"
+TAG_USE = "900m_3mon_1008"
 
 NP_XI = 8; NP_ETA = 8; node = 1; cpn = 64; do_dia = true
 NP_XI * NP_ETA == node * cpn || error("tiled and node mismatch!!!")
@@ -28,7 +28,7 @@ input_filenames = (grd = "roms_grd_900m",
                    dbry = "roms_dbry_flux_900m",
                    frc = "roms_frc_900m")
 input_folder = (grd = "grid", ini = "ini", bry = "bry", frc = "frc")
-filename = "amazon_1mon_dbry.in"
+filename = "amazon_3mon_dbry.in"
 
 projectpath = "/expanse/lustre/projects/uso101/hchen54/"
 output_fold = projectpath * fold_name
