@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/home/hchen54/figure/dbry_0927/hisfile";
-movie_path = "/home/hchen54/figure/dbry_0927/";
-start_string = "vorticity_plot"
+figure_path = "/home/hsinyi/figure/20261006_model_comp/zeta_comp";
+movie_path = "/home/hsinyi/figure/20261006_model_comp";
+start_string = "zeta_comp"
 
 cd(figure_path)
 readdir(figure_path) 
