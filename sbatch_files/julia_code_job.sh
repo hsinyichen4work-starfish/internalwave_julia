@@ -4,7 +4,7 @@
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=5
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=100G
 #SBATCH --time=24:00:00
 #SBATCH --output=runcode_%j.out
@@ -13,6 +13,6 @@
 #SBATCH --mail-type=BEGIN,END,FAIL,TIME_LIMIT_90
  
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
- d /home/hchen54/internalwave_julia
+cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia check_vorticity.jl 2>&1 | tee log_files/runcode.log  # adjust to wherever you keep the script
+julia model_check_energyflux.jl 2>&1 | tee log_files/energy_tile2.log  # adjust to wherever you keep the script

@@ -12,14 +12,14 @@ println("running with $(nprocs() - 1) worker processes")
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
     mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
-    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry_0927"   # HPC output dir — contains avg/dia/his/rst files mixed together
-    figure_path = "/home/hchen54/figure/dbry_0927/zeta_gradient"
+    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_vsponge_400"   # HPC output dir — contains avg/dia/his/rst files mixed together
+    figure_path = "/home/hchen54/figure/dbry_0927_vsponge400/zeta_gradient"
     mkpath(figure_path)
 
     ##
-    mask_rho, lon_rho, lat_rho, h, pm, pn = NCDataset(grid_fname) do ds
+    mask_rho, lon_rho, lat_rho, h, pm, pn, grid_angle = NCDataset(grid_fname) do ds
         ds["mask_rho"][:, :], ds["lon_rho"][:, :], ds["lat_rho"][:, :],
-        ds["h"][:, :], ds["pm"][:, :], ds["pn"][:, :]
+        ds["h"][:, :], ds["pm"][:, :], ds["pn"][:, :], ds["angle"][:, :]
     end
     lon_rho[lon_rho .> 180] .-= 360   # convert 0-360 convention to -180/180 (east/west hemisphere)
     umask, vmask, _ = uvp_masks(mask_rho)
@@ -49,13 +49,9 @@ println("running with $(nprocs() - 1) worker processes")
                       "M"      => (marker = :diamond, markersize = 7,  color = :cyan),
                       "CPIES"  => (marker = :circle,  markersize = 6,  color = :yellow))
 
-    # name labels sit to the right of each marker by default; these few go on
-    # the left instead so neighboring labels don't run into each other
-    moor_label_left = ("french", "M1", "CPIES1", "CPIES5", "CPIES9")
-
     # marks every mooring on the map; z = 0 puts them on the same flat plane as
     # plot_curvilinear!'s surface, and overdraw keeps them from being hidden
-    # behind that surface. text! writes each mooring's own name next to its marker.
+    # behind that surface.
     function add_mooring!(ax)
         for g in unique(moor_group)
             k = findall(==(g), moor_group)
@@ -63,15 +59,6 @@ println("running with $(nprocs() - 1) worker processes")
             scatter!(ax, Point3f.(moor_lon[k], moor_lat[k], 0);
                      marker = st.marker, markersize = st.markersize, color = st.color,
                      strokecolor = :black, strokewidth = 0.75, overdraw = true)
-        end
-        for (n, lon, lat) in zip(moor_name, moor_lon, moor_lat)
-            left = n in moor_label_left
-            kw = (text = n, fontsize = 7, font = :bold, overdraw = true,
-                  align = (left ? :right : :left, :center), offset = (left ? -5 : 5, 0))
-            # white outline drawn first, underneath, so the black name stays
-            # readable where it crosses a dark wave front
-            text!(ax, Point3f(lon, lat, 0); kw..., color = :white, strokecolor = :white, strokewidth = 2)
-            text!(ax, Point3f(lon, lat, 0); kw..., color = :black)
         end
     end
 
@@ -95,6 +82,23 @@ println("running with $(nprocs() - 1) worker processes")
 
     grad_scale = 1e6        # plot in units of 10^-6, i.e. mm of SSH change per km
     grad_range = (0, 10)    # ~90th percentile offshore; the shelf saturates
+
+    skip = 40   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
+    # lengthscale = degrees of lon/lat drawn per 1 m/s. arrow sizes are scaled
+    # down from check_output_parallel.jl's (800x600 canvas) to suit the
+    # smaller 500x425 one used here
+    quiver_kw = (lengthscale = 0.25, color = :black, shaftwidth = 1, tipwidth = 3.5, tiplength = 4)
+
+    # reference arrow for the quiver scale, in the empty lower-right corner
+    # of the axis (the rotated grid leaves all four corners blank)
+    ref_speed = 1.0   # m/s
+    ref_lon = lon_lim[2] - 0.22 * (lon_lim[2] - lon_lim[1])
+    ref_lat = lat_lim[1] + 0.07 * (lat_lim[2] - lat_lim[1])
+    function add_quiver_key!(ax)
+        arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; quiver_kw...)
+        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 9,
+              align = (:left, :bottom), offset = (0, 4), overdraw = true)
+    end
 
 end
 
@@ -129,6 +133,26 @@ end
 
     zeta_grad_masked = ifelse.(mask_rho .== 0, NaN, zeta_gradient(zeta))
 
+    ## SURFACE VELOCITY
+    # only the top s_rho level (index `end`) is read — the full u/v are
+    # 128 levels deep, and the arrows only need the surface one
+    u, v = NCDataset(fname) do ds
+        ds["u"][:, :, end, :], ds["v"][:, :, end, :]   # dims xi x eta x time
+    end
+    println(fname, " => size(u) = ", size(u), ", size(v) = ", size(v))
+
+    # average raw (unmasked) u, v onto the rho grid first, then mask the
+    # result — masking beforehand would spread NaN from land onto valid
+    # neighboring cells
+    u_rho = u2rho(u)   # still grid-relative (xi/eta), not east/north
+    v_rho = v2rho(v)
+    # rotate into true east/north components for plotting, using the
+    # grid's rotation angle (radians) from the grid file
+    u_east = u_rho .* cos.(grid_angle) .- v_rho .* sin.(grid_angle)
+    v_north = u_rho .* sin.(grid_angle) .+ v_rho .* cos.(grid_angle)
+    u_east_masked = ifelse.(mask_rho .== 0, NaN32, u_east)
+    v_north_masked = ifelse.(mask_rho .== 0, NaN32, v_north)
+
     ## PLOTS — one file per ocean_time step
     for t in 1:ntime
 
@@ -149,6 +173,10 @@ end
             # (left, right, bottom, top) keeps the "Longitude" label from being cut off
             fig = Figure(size = (500, 425), figure_padding = (16, 16, 40, 16))
             ax = topdown_axis3(fig[1, 1]; title = "SSH gradient magnitude |∇ζ|, $(str1[t])")
+            # Axis3 puts the y ticks/label on whichever side faces the camera;
+            # at exactly -pi/2 that lands on the right, and this tiny nudge
+            # (far too small to see) tips it over to the left instead
+            ax.azimuth = -pi / 2 - 1e-4
             xlims!(ax, lon_lim...)
             ylims!(ax, lat_lim...)
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, zeta_grad_masked[:, :, t] .* grad_scale;
@@ -156,7 +184,10 @@ end
             Colorbar(fig[1, 2], sp, label = "10⁻⁶ (mm/km)")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
-            add_mooring!(ax)
+            quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_masked[:, :, t], v_north_masked[:, :, t];
+                                 skip = skip, quiver_kw...)
+            add_quiver_key!(ax)
+            add_mooring!(ax)   # last, so the markers sit on top of the arrows
             save(outname_grad, fig; px_per_unit = 3.2)   # 1600x1360 pixels, so the movie stays as sharp as before
             println("saved plot to ", outname_grad)
         end
@@ -164,8 +195,8 @@ end
 end
 
 # the HPC output dir mixes roms_avg/dia/his/rst files together, so filter
-# to just the "his" files (they carry zeta, everything the plot below
-# needs) — sorted so files are processed in chronological order,
+# to just the "his" files (they carry zeta, u and v, everything the plot
+# below needs) — sorted so files are processed in chronological order,
 # which works here because the filenames embed a sortable timestamp
 files = sort(filter(f -> occursin("roms_his", basename(f)) &&
                          endswith(f, ".nc") &&

@@ -11,8 +11,10 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
+    mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
     datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
     figure_path = "/home/hchen54/figure/amazon_900m_3mon/his_rerun"
+    mkpath(figure_path)
 
     ##
     mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
@@ -20,7 +22,8 @@ println("running with $(nprocs() - 1) worker processes")
         ds["h"][:,:], ds["pm"][:,:] , ds["pn"][:,:], ds["angle"][:,:]
     end
     lon_rho[lon_rho .> 180] .-= 360   # convert 0-360 convention to -180/180 (east/west hemisphere)
-    _, _, mask_p = uvp_masks(mask_rho)
+    umask, vmask, mask_p = uvp_masks(mask_rho)
+    pm_u, pn_v = rho2u(pm), rho2v(pn)   # 1/dx on U-points, 1/dy on V-points (1/m)
     lon_psi, lat_psi = rho2p(lon_rho), rho2p(lat_rho)
     # no native lon_psi/lat_psi in this grid file — approximate via corner averaging
 
@@ -32,15 +35,91 @@ println("running with $(nprocs() - 1) worker processes")
     # check_NCOM_comp.jl, no sign flip / coalesce-to-NaN is needed before contouring.
     bathy_levels = [500, 1000, 2000]
 
-    skip = 30   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
+    # map axis shared by every plot below: topdown_axis3 plus the common
+    # lon/lat limits. Axis3 puts the y ticks/label on whichever side faces
+    # the camera; at exactly -pi/2 that lands on the right, and this tiny
+    # nudge (far too small to see) tips it over to the left instead
+    function map_axis(pos; title = "")
+        ax = topdown_axis3(pos; title = title)
+        ax.azimuth = -pi / 2 - 1e-4
+        xlims!(ax, lon_lim...)
+        ylims!(ax, lat_lim...)
+        return ax
+    end
 
-    # French mooring location (3.95°N, 45.13°W), marked on every map below
-    mooring_lon, mooring_lat = -45.13, 3.95
-    # z = 0 puts it on the same flat plane as plot_curvilinear!'s surface;
-    # overdraw keeps it from being hidden behind that surface
-    add_mooring!(ax) = scatter!(ax, [Point3f(mooring_lon, mooring_lat, 0)];
-                                marker = :star5, markersize = 18, color = :magenta,
-                                strokecolor = :black, strokewidth = 1, overdraw = true)
+    # every marker/arrow/label size below is given for the 800x600 canvas
+    # most plots use; the SSH gradient plot's smaller 500x425 canvas passes
+    # this as `scale` so its overlays shrink by the same ratio
+    small_scale = 500 / 800
+
+    # mooring locations (lon in degrees_east, -180..180 like the grid; lat in degrees_north),
+    # taken from the global attributes of mooring_file, e.g.
+    #   :M1_mor_info = "indices for M1_mor in roms_grd_900m.nc , location:(-45.4802;2.5415)"
+    # (the *_mor variables themselves hold fractional grid indices, not lon/lat)
+    moor_name, moor_lon, moor_lat = NCDataset(mooring_file) do ds
+        names = [replace(v, "_mor" => "") for v in keys(ds) if endswith(v, "_mor")]
+        locs  = [match(r"location:\(([-\d.]+);([-\d.]+)\)", ds.attrib["$(n)_mor_info"]) for n in names]
+        names, [parse(Float64, m[1]) for m in locs], [parse(Float64, m[2]) for m in locs]
+    end
+    moor_group = [replace(n, r"\d+$" => "") for n in moor_name]   # "M3" -> "M", "CPIES7" -> "CPIES"
+
+    # one marker style per mooring type, so the three arrays can be told apart
+    moor_style = Dict("french" => (marker = :star5,   markersize = 18, color = :magenta),
+                      "M"      => (marker = :diamond, markersize = 11, color = :cyan),
+                      "CPIES"  => (marker = :circle,  markersize = 10, color = :yellow))
+
+    # marks every mooring on the map; z = 0 puts them on the same flat plane as
+    # plot_curvilinear!'s surface, and overdraw keeps them from being hidden
+    # behind that surface. Call it last so the markers sit on top of any arrows.
+    function add_mooring!(ax; scale = 1)
+        for g in unique(moor_group)
+            k = findall(==(g), moor_group)
+            st = get(moor_style, g, (marker = :rect, markersize = 10, color = :white))
+            scatter!(ax, Point3f.(moor_lon[k], moor_lat[k], 0);
+                     marker = st.marker, markersize = st.markersize * scale, color = st.color,
+                     strokecolor = :black, strokewidth = 1.2 * scale, overdraw = true)
+        end
+    end
+
+    skip = 40   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
+    # lengthscale = degrees of lon/lat drawn per 1 m/s
+    quiver_kw(scale) = (lengthscale = 0.25, color = :black, shaftwidth = 1.5 * scale,
+                        tipwidth = 5 * scale, tiplength = 6 * scale)
+
+    # reference arrow for the quiver scale, in the empty lower-right corner
+    # of the axis (the rotated grid leaves all four corners blank)
+    ref_speed = 1.0   # m/s
+    ref_lon = lon_lim[2] - 0.22 * (lon_lim[2] - lon_lim[1])
+    ref_lat = lat_lim[1] + 0.07 * (lat_lim[2] - lat_lim[1])
+
+    # surface-current arrows + their reference arrow, in one call
+    function add_quiver!(ax, u_east, v_north; scale = 1)
+        quiver_curvilinear!(ax, lon_rho, lat_rho, u_east, v_north; skip = skip, quiver_kw(scale)...)
+        arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; quiver_kw(scale)...)
+        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 14 * scale,
+              align = (:left, :bottom), offset = (0, 6 * scale), overdraw = true)
+    end
+
+    # SSH gradient magnitude |∇zeta| = sqrt((dzeta/dx)^2 + (dzeta/dy)^2) on the
+    # RHO grid, dimensionless (m/m). The differences between neighboring RHO
+    # cells naturally live on U-points (xi direction) and V-points (eta
+    # direction), so compute them there, then average back onto RHO. The
+    # magnitude is rotation-invariant, so no grid_angle rotation is needed.
+    #
+    # multiplying by umask/vmask zeroes any difference taken across a
+    # land/sea boundary, and dividing by the averaged mask afterwards turns
+    # the U/V -> RHO average into "mean of the wet neighbors only" — so a
+    # land cell's zeta never leaks into the gradient at the coast.
+    function zeta_gradient(zeta)
+        dzdx_u = diff(zeta, dims = 1) .* pm_u .* umask
+        dzdy_v = diff(zeta, dims = 2) .* pn_v .* vmask
+        dzdx = u2rho(dzdx_u) ./ u2rho(umask)
+        dzdy = v2rho(dzdy_v) ./ v2rho(vmask)
+        return sqrt.(dzdx .^ 2 .+ dzdy .^ 2)
+    end
+
+    grad_scale = 1e6        # plot in units of 10^-6, i.e. mm of SSH change per km
+    grad_range = (0, 10)    # ~90th percentile offshore; the shelf saturates
 
 end
 
@@ -56,15 +135,16 @@ end
     str2 = Dates.format.(realtime, "yyyymmdd_HHMM")                      # for filenames, e.g. 20220824_0730
  
     ## Whole-file skip — if this file's last time step already produced all
-    # four plot types, assume the whole file was fully processed last run and
+    # five plot types, assume the whole file was fully processed last run and
     # skip reading zeta/temp/u/v entirely (not just skip the plotting).
     outname_zeta_last = joinpath(figure_path, "zeta_plot_$(str2[ntime]).png")
     outname_temp_last = joinpath(figure_path, "temp_depth_plot_$(str2[ntime]).png")
     outname_speed_last = joinpath(figure_path, "speed_plot_$(str2[ntime]).png")
     outname_vor_last = joinpath(figure_path, "vorticity_plot_$(str2[ntime]).png")
+    outname_grad_last = joinpath(figure_path, "zeta_grad_plot_$(str2[ntime]).png")
  
     if isfile(outname_zeta_last) && isfile(outname_temp_last) &&
-       isfile(outname_speed_last) && isfile(outname_vor_last)
+       isfile(outname_speed_last) && isfile(outname_vor_last) && isfile(outname_grad_last)
         println("all plots already exist for ", fname, ", skipping file entirely")
         return
     end
@@ -79,6 +159,7 @@ end
     println(fname, " => size(zeta) = ", size(zeta))
  
     zeta_masked = ifelse.(mask_rho .== 0, NaN32, zeta)
+    zeta_grad_masked = ifelse.(mask_rho .== 0, NaN, zeta_gradient(zeta))
  
     # theta_s/theta_b/hc/N are all cheap metadata — attributes, plus a
     # variable's shape without reading its actual data — so we can always
@@ -108,10 +189,11 @@ end
         temp_masked = ifelse.(mask_rho .== 0, NaN32, temp)
     end
  
-    ## vel data for speed + vorticity — same idea, skip the read if both
-    # plots that need it already exist for this file's last time step
-    if isfile(outname_speed_last) && isfile(outname_vor_last)
-        println("speed/vorticity plots already exist for ", fname, ", skipping u/v read")
+    ## vel data for speed + vorticity + SSH gradient (its arrows) — same idea,
+    # skip the read if every plot that needs it already exists for this
+    # file's last time step
+    if isfile(outname_speed_last) && isfile(outname_vor_last) && isfile(outname_grad_last)
+        println("speed/vorticity/SSH gradient plots already exist for ", fname, ", skipping u/v read")
     else
         u,v = NCDataset(fname) do ds
             ds["u"][:, :, :,:]  , ds["v"][:, :, :,:]
@@ -163,9 +245,7 @@ end
             println("already exists, skipping: ", outname_zeta)
         else
             fig = Figure(size = (800, 600))
-            ax = topdown_axis3(fig[1, 1]; title = "Sea surface height (zeta), $(str1[t])")
-            xlims!(ax, lon_lim...)
-            ylims!(ax, lat_lim...)
+            ax = map_axis(fig[1, 1]; title = "Sea surface height (zeta), $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, zeta_masked[:, :, t];
                                     colormap = Reverse(:RdBu), colorrange = (-1, 1))
             Colorbar(fig[1, 2], sp, label = "meters")
@@ -189,9 +269,7 @@ end
  
             fig = Figure(size = (1400, 600))
             for (col, (field, depth_label, crange)) in enumerate(((temp_1m, "1 m", (24, 30)), (temp_100m, "100 m", (15, 30))))
-                ax = topdown_axis3(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
-                xlims!(ax, lon_lim...)
-                ylims!(ax, lat_lim...)
+                ax = map_axis(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
                 sp = plot_curvilinear!(ax, lon_rho, lat_rho, field; colormap = :thermal, colorrange = crange)
                 Colorbar(fig[1, 2col], sp, label = "°C")
                 contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
@@ -212,17 +290,13 @@ end
             v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
  
             fig = Figure(size = (800, 600))
-            ax = topdown_axis3(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
-            xlims!(ax, lon_lim...)
-            ylims!(ax, lat_lim...)
+            ax = map_axis(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, speed_1m; colormap = :speed, colorrange = (0, 2))
             Colorbar(fig[1, 2], sp, label = "m/s")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            add_quiver!(ax, u_east_1m, v_north_1m)
             add_mooring!(ax)
-            quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
-                                 skip = skip, lengthscale = 0.5, color = :black,
-                                 shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
             save(outname_speed, fig)
             println("saved plot to ", outname_speed)
         end
@@ -243,20 +317,40 @@ end
             # clim = 5 * mean(abs, filter(!isnan, vor_1m))   # symmetric color limits centered on 0
             clim = 5e-5;
             fig = Figure(size = (800, 600))
-            ax = topdown_axis3(fig[1, 1]; title = "Relative vorticity, surface, $(str1[t])")
-            xlims!(ax, lon_lim...)
-            ylims!(ax, lat_lim...)
+            ax = map_axis(fig[1, 1]; title = "Relative vorticity, surface, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_psi, lat_psi, vor_1m;
                                     colormap = Reverse(:RdBu), colorrange = (-clim, clim))
             Colorbar(fig[1, 2], sp, label = "s⁻¹")
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            add_quiver!(ax, u_east_1m, v_north_1m)
             add_mooring!(ax)
-            quiver_curvilinear!(ax, lon_rho, lat_rho, u_east_1m, v_north_1m;
-                                 skip = skip, lengthscale = 0.5, color = :black,
-                                 shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
             save(outname_vor, fig)
             println("saved plot to ", outname_vor)
+        end
+ 
+        # -- SSH GRADIENT --
+        outname_grad = joinpath(figure_path, "zeta_grad_plot_$(str2[t]).png")
+        if isfile(outname_grad)
+            println("already exists, skipping: ", outname_grad)
+        else
+            # recomputed here for the same reason as in the vorticity block
+            u_east_1m = slice_at_depth(z[:, :, :, t], u_east_masked[:, :, :, t], -1.0)
+            v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
+ 
+            # small canvas = relatively larger text; the extra bottom padding
+            # (left, right, bottom, top) keeps the "Longitude" label from being cut off
+            fig = Figure(size = (500, 425), figure_padding = (16, 16, 40, 16))
+            ax = map_axis(fig[1, 1]; title = "SSH gradient magnitude |∇ζ|, $(str1[t])")
+            sp = plot_curvilinear!(ax, lon_rho, lat_rho, zeta_grad_masked[:, :, t] .* grad_scale;
+                                    colormap = :amp, colorrange = grad_range)
+            Colorbar(fig[1, 2], sp, label = "10⁻⁶ (mm/km)")
+            contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
+                     color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            add_quiver!(ax, u_east_1m, v_north_1m; scale = small_scale)
+            add_mooring!(ax; scale = small_scale)
+            save(outname_grad, fig; px_per_unit = 3.2)   # 1600x1360 pixels, same sharpness as the 800x600 plots
+            println("saved plot to ", outname_grad)
         end
     end
 end
@@ -312,3 +406,4 @@ make_movie("zeta_plot")
 make_movie("temp_depth_plot")
 make_movie("speed_plot")
 make_movie("vorticity_plot")
+make_movie("zeta_grad_plot")
