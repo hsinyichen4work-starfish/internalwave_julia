@@ -191,6 +191,58 @@ println("plotting $(length(all_dates)) time steps x $(length(band_info)) bands i
     nothing   # don't send the figures back to the main process
 end
 
+##
+# time mean over all saved times (or a shorter period: set mean_start / mean_end), one band at a time.
+# Read tile by tile and added to a running sum, so the whole time series is never in memory at once.
+#   Fx_mean["M2"], Fy_mean["M2"], ... [xi, eta] in kW m-1 (along the grid's xi / eta directions)
+#   F_mag_mean[b] = magnitude of the mean flux (not the mean of the hourly magnitudes), as in model_dia_output.jl
+mean_start, mean_end = first(all_dates), last(all_dates)
+nmean = count(d -> mean_start <= d <= mean_end, all_dates)
+println("mean: $nmean hourly records, ", mean_start, " -> ", mean_end)
+Fx_sum = Dict(b => zeros(size(mask_rho)) for b in keys(band_info))
+Fy_sum = Dict(b => zeros(size(mask_rho)) for b in keys(band_info))
+@time for f in piece_files
+    NCDataset(joinpath(nc_dum_save, f)) do ds
+        date = DateTime(1994, 1, 1) .+ Second.(round.(Int, ds["ocean_time"][:]))
+        n = findall(d -> mean_start <= d <= mean_end, date)   # this piece's times inside the mean period
+        isempty(n) && return
+        i, j = ds["xi_rho"][:], ds["eta_rho"][:]   # where this tile sits in the full grid
+        for b in keys(band_info)
+            Fx_sum[b][i, j] .+= dropdims(sum(Float64, ds["Fx_$b"][:, :, n], dims = 3), dims = 3)
+            Fy_sum[b][i, j] .+= dropdims(sum(Float64, ds["Fy_$b"][:, :, n], dims = 3), dims = 3)
+        end
+    end
+    free_memory()   # each file read leaves HDF5 buffers behind; without this the loop runs out of address space
+end
+Fx_mean = Dict(b => Fx_sum[b] ./ nmean ./ 1e3 for b in keys(band_info))   # W/m -> kW/m
+Fy_mean = Dict(b => Fy_sum[b] ./ nmean ./ 1e3 for b in keys(band_info))
+F_mag_mean = Dict(b => sqrt.(Fx_mean[b] .^ 2 .+ Fy_mean[b] .^ 2) for b in keys(band_info))
+Fx_sum = Fy_sum = nothing
+for b in sort(collect(keys(band_info)))
+    println("mean flux $b [kW/m]:  Fx ", max_min(Fx_mean[b]), "  Fy ", max_min(Fy_mean[b]), "  |F| max ", maximum(F_mag_mean[b]))
+end
+
+##
+# plot the mean, one figure per band, saved in figure_path
+mean_lim = 30   # kW/m
+for b in sort(collect(keys(band_info)))
+    fig_mean = Figure(size = (1500, 600))
+    fields_mean = [("Fx (along xi)", Fx_mean[b], :balance, (-mean_lim, mean_lim)),
+                   ("Fy (along eta)", Fy_mean[b], :balance, (-mean_lim, mean_lim)),
+                   ("|mean F|", F_mag_mean[b], :viridis, (0, mean_lim))]
+    for (n, (title, data, colormap, colorrange)) in enumerate(fields_mean)
+        ax = topdown_axis3(fig_mean[1, 2n-1]; title = title, ylabel = n == 1 ? "Latitude" : "")
+        hm = plot_curvilinear!(ax, lon_rho, lat_rho, data; colormap = colormap, colorrange = colorrange)
+        Colorbar(fig_mean[1, 2n], hm, label = "kW m⁻¹")
+    end
+    Label(fig_mean[0, :], "baroclinic energy flux, $b ($(band_info[b])), mean of $(Dates.format(mean_start, "yyyy-mm-dd HH:MM")) -> " *
+          "$(Dates.format(mean_end, "yyyy-mm-dd HH:MM"))  ($nmean hourly records)", fontsize = 18)
+    mean_fname = joinpath(figure_path, "energyflux_mean_$(b)_$(Dates.format(mean_start, "yyyymmdd"))_$(Dates.format(mean_end, "yyyymmdd")).png")
+    save(mean_fname, fig_mean)
+    println("saved ", mean_fname)
+    isinteractive() && display(fig_mean)
+end
+
 # ##
 # # (3) all windows, joined in time. The saved pieces already hold only each window's kept records: where two windows
 # #     overlapped, the overlap was split at its midpoint when the pieces were made, so every record was taken from the
