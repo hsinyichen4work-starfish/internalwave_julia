@@ -17,6 +17,8 @@ println("running with $(nprocs() - 1) worker processes")
     datadir = "/home/hsinyi/roms_data/NCOM_DATA_NC/"   # NCOM daily files: <yyyymmddhh>_ssh.nc, _uv.nc, ...
     figure_path = "/home/hsinyi/figure/20261009_region/NCOM/zeta_gradient"
     mkpath(figure_path)
+    figure_path_full = "/home/hsinyi/figure/20261009_region/NCOM/zeta_gradient_full_domain"   # same plot, whole NCOM domain
+    mkpath(figure_path_full)
 
     ## child (ROMS 900m) grid — only used for its outline and to zoom the
     # NCOM plots to the same extent as the ROMS zeta gradient plots
@@ -87,15 +89,29 @@ println("running with $(nprocs() - 1) worker processes")
     grad_scale = 1e6        # plot in units of 10^-6, i.e. mm of SSH change per km
     grad_range = (0, 10)    # same color range as the ROMS plots, for direct comparison
 
-    skip = 50   # downsample for legible quiver arrows on this ~1244x1334 grid
-    quiver_kw = (lengthscale = 0.25, color = :black, shaftwidth = 1, tipwidth = 3.5, tiplength = 4)
+    # two views of the same plot, each saved to its own folder:
+    #   zoom — zoomed to the ROMS child domain (the original plot)
+    #   full — the whole NCOM domain, to see signals outside the child grid too
+    # lengthscale = degrees of lon/lat drawn per 1 m/s; the full view spans
+    # ~1.75x more degrees, so its arrows are drawn longer to stay visible
+    lon_full_lim = extrema(lon_par)
+    lat_full_lim = extrema(lat_par)
+    views = [
+        (dir = figure_path, prefix = "zeta_grad_ncom_plot",
+         lon_lim = lon_lim, lat_lim = lat_lim, size = (500, 425), skip = 50,
+         quiver_kw = (lengthscale = 0.25, color = :black, shaftwidth = 1, tipwidth = 3.5, tiplength = 4)),
+        (dir = figure_path_full, prefix = "zeta_grad_ncom_full_plot",
+         lon_lim = lon_full_lim, lat_lim = lat_full_lim, size = (560, 500), skip = 50,
+         quiver_kw = (lengthscale = 0.4, color = :black, shaftwidth = 1, tipwidth = 3.5, tiplength = 4)),
+    ]
 
-    # reference arrow for the quiver scale, in the blank (no NCOM data) lower-left corner
+    # reference arrow for the quiver scale, in the blank lower-left corner
+    # (the rotated grid leaves that corner of both views without data)
     ref_speed = 1.0   # m/s
-    ref_lon = lon_lim[1] + 0.05 * (lon_lim[2] - lon_lim[1])
-    ref_lat = lat_lim[1] + 0.025 * (lat_lim[2] - lat_lim[1])
-    function add_quiver_key!(ax)
-        arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; quiver_kw...)
+    function add_quiver_key!(ax, v)
+        ref_lon = v.lon_lim[1] + 0.05 * (v.lon_lim[2] - v.lon_lim[1])
+        ref_lat = v.lat_lim[1] + 0.025 * (v.lat_lim[2] - v.lat_lim[1])
+        arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; v.quiver_kw...)
         text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 9,
               align = (:left, :bottom), offset = (0, 4), overdraw = true)
     end
@@ -120,8 +136,8 @@ end
     # check every timestep, not just the last — NCOM's daily files overlap
     # at midnight (hour 24 of one file == hour 0 of the next), and pmap does
     # not dispatch files in chronological order
-    outname(t) = joinpath(figure_path, "zeta_grad_ncom_plot_$(str2[t]).png")
-    if all(t -> isfile(outname(t)), 1:ntime)
+    outname(v, t) = joinpath(v.dir, "$(v.prefix)_$(str2[t]).png")
+    if all(isfile(outname(v, t)) for v in views, t in 1:ntime)
         println("all plots already exist for ", fname, ", skipping file entirely")
         return
     end
@@ -153,31 +169,33 @@ end
             continue
         end
 
-        outname_grad = outname(t)
-        if isfile(outname_grad)
-            println("already exists, skipping: ", outname_grad)
-            continue
-        end
+        for v in views
+            outname_grad = outname(v, t)
+            if isfile(outname_grad)
+                println("already exists, skipping: ", outname_grad)
+                continue
+            end
 
-        fig = Figure(size = (500, 425), figure_padding = (16, 16, 40, 16))
-        ax = topdown_axis3(fig[1, 1]; title = "NCOM SSH gradient |∇ζ|, $(str1[t])")
-        ax.azimuth = -pi / 2 - 1e-4   # keeps the y ticks/label on the left side
-        sp = plot_curvilinear!(ax, lon_par, lat_par, zeta_grad_masked[:, :, t] .* grad_scale;
-                                colormap = :amp, colorrange = grad_range)
-        Colorbar(fig[1, 2], sp, label = "10⁻⁶ (mm/km)")
-        contour!(ax, lon_par_f, lat_par_f, depth_par; levels = bathy_levels,
-                 color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
-        lines!(ax, lon_chd_b, lat_chd_b, zeros(length(lon_chd_b));
-               color = :black, linewidth = 2)   # ROMS child-grid outline
-        # xlim/ylim keep arrows from poking in from outside the zoomed view
-        quiver_curvilinear!(ax, lon_par, lat_par, u_east_masked[:, :, t], v_north_masked[:, :, t];
-                             skip = skip, xlim = lon_lim, ylim = lat_lim, quiver_kw...)
-        add_quiver_key!(ax)
-        add_mooring!(ax)   # last, so the markers sit on top of the arrows
-        xlims!(ax, lon_lim...)
-        ylims!(ax, lat_lim...)
-        save(outname_grad, fig; px_per_unit = 3.2)
-        println("saved plot to ", outname_grad)
+            fig = Figure(size = v.size, figure_padding = (16, 16, 40, 16))
+            ax = topdown_axis3(fig[1, 1]; title = "NCOM SSH gradient |∇ζ|, $(str1[t])")
+            ax.azimuth = -pi / 2 - 1e-4   # keeps the y ticks/label on the left side
+            sp = plot_curvilinear!(ax, lon_par, lat_par, zeta_grad_masked[:, :, t] .* grad_scale;
+                                    colormap = :amp, colorrange = grad_range)
+            Colorbar(fig[1, 2], sp, label = "10⁻⁶ (mm/km)")
+            contour!(ax, lon_par_f, lat_par_f, depth_par; levels = bathy_levels,
+                     color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+            lines!(ax, lon_chd_b, lat_chd_b, zeros(length(lon_chd_b));
+                   color = :black, linewidth = 2)   # ROMS child-grid outline
+            # xlim/ylim keep arrows from poking in from outside the view
+            quiver_curvilinear!(ax, lon_par, lat_par, u_east_masked[:, :, t], v_north_masked[:, :, t];
+                                 skip = v.skip, xlim = v.lon_lim, ylim = v.lat_lim, v.quiver_kw...)
+            add_quiver_key!(ax, v)
+            add_mooring!(ax)   # last, so the markers sit on top of the arrows
+            xlims!(ax, v.lon_lim...)
+            ylims!(ax, v.lat_lim...)
+            save(outname_grad, fig; px_per_unit = 3.2)
+            println("saved plot to ", outname_grad)
+        end
     end
 end
 
@@ -194,22 +212,22 @@ pmap(process_file, files; on_error = ex -> println("a file failed: ", ex))
 # sort lexicographically). ffmpeg comes from FFMPEG_jll.
 
 using FFMPEG_jll
-function make_movie(prefix::String; fps = 4)
+function make_movie(dir::String, prefix::String; fps = 4)
     pngs = sort(filter(f -> startswith(basename(f), prefix) && endswith(f, ".png"),
-                        readdir(figure_path, join = true)))
+                        readdir(dir, join = true)))
     if isempty(pngs)
         println("no PNGs found for prefix \"$prefix\", skipping movie")
         return
     end
 
-    listfile = joinpath(figure_path, "$(prefix)_filelist.txt")
+    listfile = joinpath(dir, "$(prefix)_filelist.txt")
     open(listfile, "w") do io
         for p in pngs
             println(io, "file '$(p)'")
         end
     end
 
-    outname = joinpath(figure_path, "$(prefix)_movie.mp4")
+    outname = joinpath(dir, "$(prefix)_movie.mp4")
     FFMPEG_jll.ffmpeg() do ffmpeg_path
         run(`$ffmpeg_path -y -r $fps -f concat -safe 0 -i $listfile -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -vcodec libx264 -pix_fmt yuv420p $outname`)
     end
@@ -217,4 +235,6 @@ function make_movie(prefix::String; fps = 4)
     println("saved movie to ", outname)
 end
 
-make_movie("zeta_grad_ncom_plot")
+for v in views   # one movie per view, saved in that view's folder
+    make_movie(v.dir, v.prefix)
+end
