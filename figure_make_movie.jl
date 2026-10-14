@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/home/hsinyi/figure/20261006_model_comp/zeta_comp";
-movie_path = "/home/hsinyi/figure/20261006_model_comp";
-start_string = "zeta_comp"
+figure_path = "/home/hsinyi/figure/20261009_region/dbry0927/m2flux";
+movie_path = "/home/hsinyi/figure/20261009_region/dbry0927/";
+start_string = "energyflux_M2"
 
 cd(figure_path)
 readdir(figure_path) 
