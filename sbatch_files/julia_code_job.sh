@@ -4,9 +4,9 @@
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=100G
-#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=7
+#SBATCH --mem=20G
+#SBATCH --time=10:00:00
 #SBATCH --output=runcode_%j.out
 #SBATCH --error=runcode_%j.err
 #SBATCH --mail-user=HsinYi.Chen@usm.edu
@@ -15,4 +15,4 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia model_check_energyflux.jl 2>&1 | tee log_files/energy_tile2.log  # adjust to wherever you keep the script
+julia energyflux_tile_working.jl 2>&1 | tee log_files/dia_plot.log  # adjust to wherever you keep the script

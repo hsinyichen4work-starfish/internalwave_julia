@@ -6,6 +6,7 @@
 # configuration `c` (a NamedTuple built in make_run_folder.jl) explicitly.
 
 using Printf
+using Dates
 
 # Read `file`, apply the replacements in order (like successive strrep calls),
 # and write it back.
@@ -21,11 +22,26 @@ end
 # Fortran double-precision literal, e.g. 6 -> "6.0D+00"
 fortran_d(x) = replace(uppercase(@sprintf("%.1e", x)), "E" => "D")
 
+# Date stamp (YYYYMMDDHH) at the end of an input file name, e.g.
+# roms_bry_900m_2022082400.nc or roms_ini_900m2022082400 -> 2022-08-24T00:00
+file_date(f) = DateTime(match(r"(\d{10})(\.nc)?$", f)[1], dateformat"yyyymmddHH")
+
+# Days of daily frc/bry files the run needs: the day of the initial condition
+# through the day the run ends, plus one extra day of margin.
+function run_days(c)
+    t0 = file_date(c.input_filenames.ini)
+    t1 = t0 + Second(c.time_stepping.NTIMES * c.time_stepping.dt)
+    return Date(t0), Date(t1) + Day(1)
+end
+
 # Files in `dir` whose names start with `prefix` (MATLAB dir([dir, prefix, '*'])),
-# joined as continuation lines of the .in file with paths under `path`.
-function file_list(dir, prefix, path)
-    fil = sort(filter(f -> startswith(f, prefix), readdir(dir)))
-    isempty(fil) && error("no files matching $(joinpath(dir, prefix))* found")
+# keeping only those dated within `days`, joined as continuation lines of the
+# .in file with paths under `path`.
+function file_list(dir, prefix, path, days)
+    d0, d1 = days
+    fil = sort(filter(f -> startswith(f, prefix) && d0 <= Date(file_date(f)) <= d1,
+                      readdir(dir)))
+    isempty(fil) && error("no files matching $(joinpath(dir, prefix))* between $d0 and $d1 found")
     return join((path * f for f in fil), "\n     ")
 end
 
@@ -43,9 +59,17 @@ function infile_make(c)
     mkpath(c.projectpath * c.fold_name)
 
     input_dir = c.projectpath * "input/"
-    frc_str = file_list(input_dir * c.input_folder.frc, c.input_filenames.frc, frc_path)
-    bry_str = file_list(input_dir * c.input_folder.bry, c.input_filenames.bry, bry_path)
-    dbry_str = file_list(input_dir * c.input_folder.bry, c.input_filenames.dbry, dbry_path)
+    days = run_days(c)
+    frc_str = file_list(input_dir * c.input_folder.frc, c.input_filenames.frc, frc_path, days)
+    bry_str = file_list(input_dir * c.input_folder.bry, c.input_filenames.bry, bry_path, days)
+
+    # Pure Orlanski runs don't read the dynamic boundary flux files
+    if c.dyn_bry
+        dbry_str = file_list(input_dir * c.input_folder.bry, c.input_filenames.dbry, dbry_path, days)
+    else
+        sub_file!(c.new_folder * c.filename, r"\n *EXAMPLE_dbry" => "")
+        dbry_str = ""
+    end
 
     ts = c.time_stepping
     sub_file!(c.new_folder * c.filename,
@@ -91,7 +115,8 @@ function do_partition_make(c)
         "EXAMPLE_INPUT" => c.projectpath * "input/",
         "npxi_ex" => string(c.NP_XI),
         "npeta_ex" => string(c.NP_ETA),
-        "tag_ex" => c.TAG_USE)
+        "tag_ex" => c.TAG_USE,
+        "DO_DYN_BRY=1" => "DO_DYN_BRY=" * (c.dyn_bry ? "1" : "0"))
 
     fo, fn = c.input_folder, c.input_filenames
     sub_file!(c.new_folder * "partition_input",
@@ -132,4 +157,10 @@ function param_make(c)
         "nex" => string(c.grid.N),
         "npei_ex" => string(c.NP_XI),
         "npeta_ex" => string(c.NP_ETA))
+end
+
+function obctune_make(c)
+    c.dyn_bry && return nothing
+    sub_file!(c.new_folder * "obc_tune.opt",
+        r"obc_tuning *= *\.true\." => "obc_tuning = .false.")
 end
