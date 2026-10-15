@@ -12,8 +12,8 @@ println("running with $(nprocs() - 1) worker processes")
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
     mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
-    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
-    figure_path = "/home/hchen54/figure/amazon_900m_3mon/his_rerun"
+    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
+    figure_path = "/home/hchen54/figure/amazon_900m_3mon_1008"
     mkpath(figure_path)
 
     ##
