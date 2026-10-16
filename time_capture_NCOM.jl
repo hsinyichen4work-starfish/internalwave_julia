@@ -15,6 +15,7 @@ parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"    # NCOM 900m grid 
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # mooring locations in its global attributes
 figure_path = "/home/hsinyi/figure/HYCOM_data/NCOM"   # same file names as the HYCOM figures one folder up
 mkpath(figure_path)
+colorbar_file = "/home/hsinyi/figure/HYCOM_data/colorbar_nc.nc"   # HYCOM color ranges, written by HYCOM_data.jl
 
 ## settings
 plot_depths = [0, 100, 200, 250]   # depths (m) to plot temp/salt/speed at, same as HYCOM_data.jl
@@ -168,10 +169,27 @@ function add_quiver!(ax, u, v)
           align = (:left, :bottom), offset = (0, 6))
 end
 
+## HYCOM color range of every plot, keyed by the figure name without .png
+# (e.g. "temp_100m_2022090112"); NCOM figures have the same names, so each NCOM
+# snapshot is drawn with the colorbar of the HYCOM one at the same time/variable/depth
+hycom_colorbars = isfile(colorbar_file) ? NCDataset(colorbar_file) do ds
+    Dict(n => (lo, hi) for (n, lo, hi) in zip(ds["name"][:], ds["cmin"][:], ds["cmax"][:]))
+end : Dict{String,NTuple{2,Float64}}()
+isempty(hycom_colorbars) && println("no HYCOM color ranges in $colorbar_file — run HYCOM_data.jl first; ",
+                                    "falling back to each map's own range")
+
 # map of one NCOM field on its curvilinear grid (flat surface, as plot_curvilinear!
 # does), with the NCOM/ROMS grid outlines, velocity arrows and moorings
 function plot_field(field, u, v, title, label, cmap, outfile; colorrange = nothing)
-    cr = something(colorrange, quantile(filter(!isnan, vec(field)), (0.02, 0.98)))
+    key = splitext(basename(outfile))[1]
+    cr = if colorrange !== nothing
+        colorrange
+    elseif haskey(hycom_colorbars, key)
+        hycom_colorbars[key]
+    else
+        println("no HYCOM color range for $key, using this map's own range")
+        quantile(filter(!isnan, vec(field)), (0.02, 0.98))
+    end
     fig = Figure(size = (800, 760))
     ax = Axis(fig[1, 1], title = title, xlabel = "lon", ylabel = "lat", aspect = DataAspect(),
               backgroundcolor = :gray80,   # land / below seafloor (NaN) shows as gray, like HYCOM
@@ -202,7 +220,7 @@ for (t, tag, rec) in captures
 
         if z == 0
             ssh = read_ssh(f("ssh"), rec)
-            plot_field(ssh, u, v, "NCOM SSH, vel at $zstr  $t", "SSH (m)", :thermal,
+            plot_field(ssh, u, v, "NCOM SSH, vel at $zstr  $t", "SSH (m)", :balance,
                        joinpath(figure_path, "ssh_$(d).png"))
         end
 

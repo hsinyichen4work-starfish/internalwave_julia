@@ -10,6 +10,7 @@ parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"    # NCOM 900m grid 
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # mooring locations in its global attributes
 figure_path = "/home/hsinyi/figure/HYCOM_data"
 mkpath(figure_path)
+colorbar_file = joinpath(figure_path, "colorbar_nc.nc")   # color range of every plot, read by time_capture_NCOM.jl
 
 ##
 # fname = "/home/mbui/ModelOutput/NCOM/HYCOM_data/gofs35_hycom_glbz04_2022080112_t0000_ts3z.nc"
@@ -158,11 +159,32 @@ end
 grad_scale = 1e6        # plot in units of 10^-6, i.e. mm of SSH change per km
 grad_range = (0, 10)    # same color range as the NCOM/ROMS zeta gradient plots
 
+## color range of every plot, keyed by the figure name without .png (e.g.
+# "temp_100m_2022090112"), saved to colorbar_file so time_capture_NCOM.jl can draw
+# the NCOM snapshot of the same variable/depth/time with the same colorbar.
+# Existing entries are read first, so a partial run (e.g. one date) only
+# updates its own plots instead of dropping the others.
+colorbars = isfile(colorbar_file) ? NCDataset(colorbar_file) do ds
+    Dict(n => (lo, hi) for (n, lo, hi) in zip(ds["name"][:], ds["cmin"][:], ds["cmax"][:]))
+end : Dict{String,NTuple{2,Float64}}()
+
+function save_colorbars(fname, colorbars)
+    names = sort(collect(keys(colorbars)))
+    NCDataset(fname, "c") do ds
+        defDim(ds, "plot", length(names))
+        defVar(ds, "name", names, ("plot",); attrib = ["long_name" => "figure name (file name without .png)"])
+        defVar(ds, "cmin", [Float64(colorbars[n][1]) for n in names], ("plot",); attrib = ["long_name" => "colorbar minimum"])
+        defVar(ds, "cmax", [Float64(colorbars[n][2]) for n in names], ("plot",); attrib = ["long_name" => "colorbar maximum"])
+        ds.attrib["source"] = "HYCOM_data.jl"
+    end
+end
+
 # regional map (full resolution) of one field, with the ROMS 900m grid outline
 # and the velocity arrows (u, v: full lon x lat slices, as from read_slice)
 function plot_field(field, u, v, title, label, cmap, outfile; colorrange = nothing)
     sub = field[ilon, :][ix, iy]
     cr = something(colorrange, quantile(filter(!isnan, vec(sub)), (0.02, 0.98)))
+    colorbars[splitext(basename(outfile))[1]] = Float64.(Tuple(cr))
     fig = Figure(size = (800, 760))
     ax = Axis(fig[1, 1], title = title, xlabel = "lon", ylabel = "lat", aspect = DataAspect())
     hm = heatmap!(ax, lon180[ix], lat[iy], sub; colormap = cmap, colorrange = cr, nan_color = :gray80)
@@ -190,7 +212,7 @@ for d in dates
 
         if k == 1
             ssh = read_slice(f("ssh"), "surf_el")
-            plot_field(ssh, u, v, "HYCOM SSH, vel at $zstr  $t", "SSH (m)", :thermal,
+            plot_field(ssh, u, v, "HYCOM SSH, vel at $zstr  $t", "SSH (m)", :balance,
                        joinpath(figure_path, "ssh_$(d).png"))
             plot_field(ssh_gradient(ssh) .* grad_scale, u, v, "HYCOM SSH gradient |∇ζ|, vel at $zstr  $t",
                        "10⁻⁶ (mm/km)", :amp, joinpath(figure_path, "ssh_grad_$(d).png");
@@ -208,4 +230,6 @@ for d in dates
         plot_field(hypot.(u, v), u, v, "HYCOM current speed at $zstr  $t", "|u| (m/s)", :speed,
                    joinpath(figure_path, "speed_$(zstr)_$(d).png"))
     end
+    save_colorbars(colorbar_file, colorbars)   # after every date, so a crash keeps what's done
+    println("saved color ranges to ", colorbar_file)
 end
