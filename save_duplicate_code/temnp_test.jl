@@ -8,7 +8,7 @@ grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.n
 fname      = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry_2/roms_his.20220901160000.nc"  # <-- pick one file
 # -------------------------------
 
-figure_path = "/home/hchen54/figure/dbry900m/hisfile"  # test PNGs land here as temp_TEST_*.png
+figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry900m/hisfile"  # test PNGs land here as temp_TEST_*.png
 
 ## Grid
 mask_rho, lon_rho, lat_rho, h = NCDataset(grid_fname) do ds

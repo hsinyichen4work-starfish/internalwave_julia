@@ -1,6 +1,6 @@
 using FFMPEG_jll
 
-base_path = "/home/hchen54/figure/dbry_0927_sponge30/bry_match";
+base_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry_0927_sponge30/bry_match";
 movie_path = joinpath(base_path, "movie");
 
 function make_movie(figure_path::String, prefix::String; fps = 4)

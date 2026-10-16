@@ -16,7 +16,7 @@ include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc" ;
 # bry_dir = "/expanse/lustre/projects/uso101/hchen54/input/bry_63"
 datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry_2"
-figure_path = "/home/hchen54/figure/dbry900m/sideview"
+figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry900m/sideview"
 
 ##
 mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds
