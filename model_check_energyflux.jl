@@ -1,7 +1,7 @@
 using Distributed
 
 # worker processes for the parallel run at the bottom. Added only once, so re-running this block in the same session is safe
-n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "4")) - 1)   # -1 reserves a CPU for this main process
+n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "17")) - 1)   # -1 reserves a CPU for this main process
 ENV["HDF5_USE_FILE_LOCKING"] = "FALSE"   # several processes read the same his files; workers inherit this
 # each worker is told how much memory it may use before it must clean up. Without this Julia sizes its cleanup to the
 # whole node's memory, not the job's share, and leftovers from earlier pieces pile up until Slurm kills the job.
@@ -124,6 +124,7 @@ end
 filters = [
     (name = "M2",   kind = "band", T = (9, 15), N = 4),
     (name = "hp24", kind = "high", T = 24,      N = 4),
+    (name = "hp9",  kind = "high", T = 9,       N = 4),
 ]
 
 # which mean density rho' is measured from. The s levels ride up and down with zeta, so the two choices differ:
@@ -194,12 +195,14 @@ cfg = (; datadir, nc_dum_save, his_files, nt_each, t_end, his_time_all, his_date
     # Reads rho, u, v, zeta -> rho' -> hydrostatic p -> removes depth means -> time filters -> p'u', p'v' -> depth integral,
     # freeing or overwriting each big array as soon as it is no longer needed (peak ≈ 7 arrays the size of rho_t),
     # and saves the tile core over the window's kept records to one nc file in cfg.nc_dum_save. Returns the file name.
-    # A piece whose file already exists is skipped unless overwrite = true, so an interrupted batch can simply be rerun.
+    # A piece whose file already exists and holds every band in `filters` is skipped unless overwrite = true, so an
+    # interrupted batch can simply be rerun; one saved before a band was added to `filters` is recomputed.
     function energyflux_piece(ix, iy, iw, cfg; overwrite = false)
         (; his_files, nt_each, t_end, his_time_all, his_date_all, dt, windows, keeps, tiles, filters, rho_reference) = cfg
         tag = "[w$(lpad(iw, 2, '0')) tile $(lpad(ix, 2, '0')),$(lpad(iy, 2, '0'))] "
         nc_fname = piece_fname(ix, iy, iw, cfg)
-        if isfile(nc_fname) && !overwrite
+        if isfile(nc_fname) && !overwrite &&
+           NCDataset(ds -> all(flt -> haskey(ds, "Fx_$(flt.name)"), filters), nc_fname)
             println(tag, "already saved, skipping: ", nc_fname)
             return nc_fname
         end
