@@ -11,11 +11,19 @@
 # Step 3: loop over the daily NCOM NetCDF files, interpolate temp, salt,
 #         u, v (3D) and ssh (2D) at every hour, and save NCOM_<name>.nc.
 #
+# The mooring line transect (straight line M1 -> CPIES7, every dx_km, same
+# points as in the HYCOM / GLOBAL scripts) is one more job, done the same way:
+# it is split into pieces of ~piece_km, each with its own small sub-grid, so
+# only a narrow band along the line is read (not the whole bounding box).
+# Saved as NCOM_M1_CPIES7.nc: variables (z, x, time) + u_along/u_cross, ssh (x, time).
+#
 # Usage:
-#   julia mooring_NCOM_extraction.jl              -> all moorings, n_workers in parallel
+#   julia mooring_NCOM_extraction.jl              -> all moorings + transect, n_workers in parallel
 #   julia mooring_NCOM_extraction.jl M2           -> only M2   (same as: ... 3)
 #   julia mooring_NCOM_extraction.jl M1 CPIES4    -> M1 and CPIES4
-# or under a SLURM array job (#SBATCH --array=1-14) the task id picks the mooring.
+#   julia mooring_NCOM_extraction.jl transect     -> only the transect (same as: ... 15)
+# or under a SLURM array job (#SBATCH --array=1-15) the task id picks the mooring
+# (15 = the transect).
 
 using Distributed
 
@@ -30,13 +38,15 @@ end
 println("running with $(nworkers()) worker process(es)")
 
 # packages + interp_bry.jl first, in their own @everywhere: the module has to
-# exist before the block below (which uses it) is evaluated
+# exist before the block below (which uses it) is evaluated.
 @everywhere using NCDatasets, Dates, NearestNeighbors
+# interp_bry.jl functions are always called with the module name (InterpBry.get_bry_coef, ...),
+# never via `using`, so re-running the script in the same session / on the same
+# workers always uses the freshly included module (and picks up edits to interp_bry.jl).
 @everywhere include("/home/hsinyi/Documents/Julia/function/interp_bry.jl")
+@everywhere include("/home/hsinyi/Documents/Julia/function/mooring_transect.jl")
 
 @everywhere begin
-    using .InterpBry
-    const Interp2D = InterpBry.Interp3D.Interp2D
 
     # -----------------------------------------------------------------------
     # User input (needed on every worker)
@@ -53,6 +63,7 @@ println("running with $(nworkers()) worker process(es)")
 
     pad = 3   # extra grid cells around the mooring: 1 is enough for the triangle stencil in interp_bry.jl,
               # the extra cells give coastal moorings more wet neighbours for the land-fill step
+    piece_km = 20.0   # transect: length of each piece with its own sub-grid
 
     # -----------------------------------------------------------------------
     # Sub-grid search
@@ -158,28 +169,16 @@ println("running with $(nworkers()) worker process(es)")
     mt2datetime(mt) = DateTime(1900, 12, 31) + Millisecond(round(Int, mt * 86_400_000))
 
     # -----------------------------------------------------------------------
-    # One mooring: sub-grid -> interpolation operator -> time loop -> save
+    # One piece = a set of points with its own sub-grid and interpolation operators
     # -----------------------------------------------------------------------
     """
-        extract_mooring(name, lon, lat) -> fname
+        build_piece(lonp, latp, maskp, plon, plat) -> piece
 
-    Interpolate NCOM temp, salt, u, v (at `zout`) and ssh to one mooring for
-    every hour in `dates`, and save them to `outdir/NCOM_<name>.nc`.
+    Sub-grid around the points (plon, plat) and the interpolation operators
+    (built once, reused for every variable and time).
     """
-    function extract_mooring(name, lon, lat)
-        t_start = time()
-
-        # parent grid; NCDatasets gives lon(dim_j, dim_i) as lon[i, j], size (Li, Lj)
-        lonp, latp, maskp = NCDataset(parent_grid) do ds
-            Float64.(nomissing(ds["lon"][:, :], NaN)),
-            Float64.(nomissing(ds["lat"][:, :], NaN)),
-            Float64.(nomissing(ds["mask"][:, :], 0.0))
-        end
-
-        i0, i1, j0, j1, inear, jnear = mooring_subgrid(lonp, latp, [lon], [lat]; pad=pad)
-        println("$name: sub-grid i=$i0:$i1, j=$j0:$j1, nearest (i,j)=($(inear[1]),$(jnear[1])), ",
-                "mask=$(maskp[inear[1], jnear[1]])")
-
+    function build_piece(lonp, latp, maskp, plon, plat)
+        i0, i1, j0, j1, _, _ = mooring_subgrid(lonp, latp, plon, plat; pad=pad)
         lons  = lonp[i0:i1, j0:j1]
         lats  = latp[i0:i1, j0:j1]
         masks = maskp[i0:i1, j0:j1]
@@ -192,25 +191,55 @@ println("running with $(nworkers()) worker process(es)")
         src = fill_index(masks, lons, lats)
         zp  = prep_field(zm3s, src; dz_below=1.0)
 
-        # interpolation operators (built once, reused for every variable and time)
-        Nz = length(zout)
-        A = get_bry_coef(lons, lats, zp, [lon], [lat], zout)        # 3D: Nz x (K*Mi*Mj)
-        elem2, coef2, _ = Interp2D.get_2d_coef(lons, lats, fill(lon, 1, 1), fill(lat, 1, 1))
-        interp2d(F) = Interp2D.apply_2d_coef(coef2, elem2, prep_field2d(F, src))[1]
+        A = InterpBry.get_bry_coef(lons, lats, zp, plon, plat, zout)          # 3D: (Nz*Np) x (K*Mi*Mj)
+        elem2, coef2, _ = InterpBry.Interp3D.Interp2D.get_2d_coef(lons, lats, reshape(plon, :, 1), reshape(plat, :, 1))
+        h = InterpBry.Interp3D.Interp2D.apply_2d_coef(coef2, elem2, prep_field2d(hs, src))   # seafloor depth (negative)
+        return (i = i0:i1, j = j0:j1, src = src, A = A, elem2 = elem2, coef2 = coef2,
+                np = length(plon), h = h, below = zout .< permutedims(h))   # below: (Nz, Np) under the seafloor
+    end
 
-        h_moor = interp2d(hs)                 # seafloor depth at the mooring (negative)
-        below  = zout .< h_moor               # output depths under the seafloor
-        println("$name: h = $(round(h_moor, digits=1)) m")
+    interp3d(p, F) = (Fc = InterpBry.apply_bry_coef(p.A, prep_field(F, p.src), length(zout), p.np); Fc[p.below] .= NaN; Fc)
+    interp2d(p, F) = InterpBry.Interp3D.Interp2D.apply_2d_coef(p.coef2, p.elem2, prep_field2d(F, p.src))
 
-        interp3d(F) = (Fc = vec(apply_bry_coef(A, prep_field(F, src), Nz, 1)); Fc[below] .= NaN; Fc)
+    # -----------------------------------------------------------------------
+    # One job (a mooring, or the transect `tr`): pieces -> time loop -> save
+    # -----------------------------------------------------------------------
+    """
+        extract_mooring(name, lon, lat; tr=nothing) -> fname
+
+    Interpolate NCOM temp, salt, u, v (at `zout`) and ssh to one mooring
+    (lon, lat), or to every point of the transect `tr` (see transect_points),
+    for every hour in `dates`, and save them to `outdir/NCOM_<name>.nc`.
+    """
+    function extract_mooring(name, lon, lat; tr=nothing)
+        t_start = time()
+
+        # parent grid; NCDatasets gives lon(dim_j, dim_i) as lon[i, j], size (Li, Lj)
+        lonp, latp, maskp = NCDataset(parent_grid) do ds
+            Float64.(nomissing(ds["lon"][:, :], NaN)),
+            Float64.(nomissing(ds["lat"][:, :], NaN)),
+            Float64.(nomissing(ds["mask"][:, :], 0.0))
+        end
+
+        plon, plat = tr === nothing ? ([lon], [lat]) : (tr.lon, tr.lat)
+        np_piece = tr === nothing ? 1 : max(1, round(Int, piece_km / (tr.dist[2] - tr.dist[1])))
+        pieces = [build_piece(lonp, latp, maskp, plon[r], plat[r])
+                  for r in Iterators.partition(eachindex(plon), np_piece)]
+        for p in pieces
+            println("$name: sub-grid i=$(p.i), j=$(p.j), h = $(round.(extrema(p.h), digits=1)) m")
+        end
+        h_out = reduce(vcat, [p.h for p in pieces])
 
         # Loop over the daily files. Each file holds 25 hourly records (00..24 h);
         # record 25 is the same time as record 1 of the next day, so it is
         # skipped except for the last day.
+        # Each record: (Nz, Np) for the 3D variables, (Np,) for ssh.
+        # The transect is kept (and saved) as Float32: ~0.6 GB per variable for 100 days.
+        T = tr === nothing ? Float64 : Float32
         time_out = DateTime[]
-        temp_out, salt_out, u_out, v_out = Vector{Float64}[], Vector{Float64}[],
-                                           Vector{Float64}[], Vector{Float64}[]
-        ssh_out = Float64[]
+        temp_out, salt_out, u_out, v_out = Matrix{T}[], Matrix{T}[], Matrix{T}[], Matrix{T}[]
+        ssh_out = Vector{T}[]
+        all3d(var, t) = reduce(hcat, [interp3d(p, var[p.i, p.j, :, t]) for p in pieces])
 
         for d in dates
             tag = Dates.format(d, "yyyymmdd") * "00"
@@ -222,11 +251,11 @@ println("running with $(nworkers()) worker process(es)")
                 recs = d == last(dates) ? eachindex(MT) : eachindex(MT)[1:end-1]
                 for t in recs
                     push!(time_out, mt2datetime(MT[t]))
-                    push!(temp_out, interp3d(ds_ts["layer_temperature"][i0:i1, j0:j1, :, t]))
-                    push!(salt_out, interp3d(ds_ts["layer_salinity"][i0:i1, j0:j1, :, t]))
-                    push!(u_out,    interp3d(ds_uv["u_velocity"][i0:i1, j0:j1, :, t]))
-                    push!(v_out,    interp3d(ds_uv["v_velocity"][i0:i1, j0:j1, :, t]))
-                    push!(ssh_out,  interp2d(ds_ssh["ssh"][i0:i1, j0:j1, t]))
+                    push!(temp_out, all3d(ds_ts["layer_temperature"], t))
+                    push!(salt_out, all3d(ds_ts["layer_salinity"], t))
+                    push!(u_out,    all3d(ds_uv["u_velocity"], t))
+                    push!(v_out,    all3d(ds_uv["v_velocity"], t))
+                    push!(ssh_out,  reduce(vcat, [interp2d(p, ds_ssh["ssh"][p.i, p.j, t]) for p in pieces]))
                 end
             finally
                 close(ds_ts); close(ds_uv); close(ds_ssh)
@@ -234,9 +263,25 @@ println("running with $(nworkers()) worker process(es)")
             println("$name: done $tag  ($(length(time_out)) records)")
         end
 
-        # save: 3D variables (z, time), ssh (time)
-        mkpath(outdir)
         fname = joinpath(outdir, "NCOM_$(name).nc")
+        if tr !== nothing
+            # transect: (z, x, time)
+            save_transect(fname, tr, zout, time_out,
+                          ["temp" => (stack(temp_out), "temperature", "degC"),
+                           "salt" => (stack(salt_out), "salinity", "psu"),
+                           "u"    => (stack(u_out), "eastward velocity", "m/s"),
+                           "v"    => (stack(v_out), "northward velocity", "m/s")];
+                          ssh = stack(ssh_out), h = h_out,
+                          title  = "NCOM output interpolated to the $(tr.from) - $(tr.to) transect",
+                          source = "mooring_NCOM_extraction.jl, grid $parent_grid, data $datadir")
+            println("$name: $(round((time() - t_start) / 60, digits=1)) min")
+            return fname
+        end
+
+        # mooring: 3D variables (z, time), ssh (time)
+        Nz = length(zout)
+        zt(x) = stack(x)[:, 1, :]
+        mkpath(outdir)
         NCDataset(fname, "c") do ds
             ds.attrib["title"]   = "NCOM output interpolated to mooring $name"
             ds.attrib["station"] = name
@@ -245,17 +290,17 @@ println("running with $(nworkers()) worker process(es)")
 
             defVar(ds, "lon", lon, (), attrib=["units" => "degrees_east"])
             defVar(ds, "lat", lat, (), attrib=["units" => "degrees_north"])
-            defVar(ds, "h", h_moor, (),
+            defVar(ds, "h", h_out[1], (),
                    attrib=["long_name" => "interpolated NCOM water depth", "units" => "m", "positive" => "up"])
             defVar(ds, "z", zout, ("z",), attrib=["units" => "m", "positive" => "up"])
             defVar(ds, "time", time_out, ("time",), attrib=["units" => "hours since 2022-01-01 00:00:00"])
 
             dims3 = ("z", "time")
-            defVar(ds, "temp", stack(temp_out), dims3, attrib=["long_name" => "temperature", "units" => "degC"])
-            defVar(ds, "salt", stack(salt_out), dims3, attrib=["long_name" => "salinity", "units" => "psu"])
-            defVar(ds, "u", stack(u_out), dims3, attrib=["long_name" => "eastward velocity", "units" => "m/s"])
-            defVar(ds, "v", stack(v_out), dims3, attrib=["long_name" => "northward velocity", "units" => "m/s"])
-            defVar(ds, "ssh", ssh_out, ("time",), attrib=["long_name" => "sea surface height", "units" => "m"])
+            defVar(ds, "temp", zt(temp_out), dims3, attrib=["long_name" => "temperature", "units" => "degC"])
+            defVar(ds, "salt", zt(salt_out), dims3, attrib=["long_name" => "salinity", "units" => "psu"])
+            defVar(ds, "u", zt(u_out), dims3, attrib=["long_name" => "eastward velocity", "units" => "m/s"])
+            defVar(ds, "v", zt(v_out), dims3, attrib=["long_name" => "northward velocity", "units" => "m/s"])
+            defVar(ds, "ssh", first.(ssh_out), ("time",), attrib=["long_name" => "sea surface height", "units" => "m"])
         end
         println("$name: saved $fname  ($(round((time() - t_start) / 60, digits=1)) min)")
         return fname
@@ -267,15 +312,19 @@ end
 # ---------------------------------------------------------------------------
 mooring_file = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"
 
+transect_ends = ("M1", "CPIES7")   # mooring line transect, from -> to
+dx_km         = 1.0                # transect point spacing (same in all the model scripts)
+
 # mooring locations (lon in degrees_east, -180..180 like the grid; lat in degrees_north),
 # taken from the global attributes of mooring_file, e.g.
 #   :M1_mor_info = "indices for M1_mor in roms_grd_900m.nc , location:(-45.4802;2.5415)"
-# (order = variable order in the file: french, M1..M4, CPIES1..9)
-moor_name, moor_lon, moor_lat = NCDataset(mooring_file) do ds
-    names = [replace(v, "_mor" => "") for v in keys(ds) if endswith(v, "_mor")]
-    locs  = [match(r"location:\(([-\d.]+);([-\d.]+)\)", ds.attrib["$(n)_mor_info"]) for n in names]
-    names, [parse(Float64, m[1]) for m in locs], [parse(Float64, m[2]) for m in locs]
-end
+# (order = variable order in the file: french, M1..M4, CPIES1..9).
+# The transect is appended as one more job, after the moorings.
+moor_name, moor_lon, moor_lat = read_moorings(mooring_file)
+tr = transect_points(moor_name, moor_lon, moor_lat, transect_ends...; dx_km = dx_km)
+println("transect $(tr.name): $(length(tr.lon)) points, $(round(tr.dist[end], digits=1)) km, moorings on it: ",
+        join(tr.moor, ", "))
+push!(moor_name, "transect"); push!(moor_lon, NaN); push!(moor_lat, NaN)
 
 # which moorings to run (index into the list above, or the name), see Usage at the top
 function find_mooring(a, names)
@@ -290,7 +339,11 @@ println("Moorings in this run : ", join(moor_name[moor_sel], ", "))
 
 # hand the moorings out to the workers, one mooring per worker at a time;
 # an error in one mooring is reported but does not stop the others
-results = pmap(k -> extract_mooring(moor_name[k], moor_lon[k], moor_lat[k]), moor_sel;
+# the transect is the longest job: start it first
+sort!(moor_sel, by = k -> moor_name[k] != "transect")
+results = pmap(k -> moor_name[k] == "transect" ? extract_mooring(tr.name, NaN, NaN; tr = tr) :
+                                                extract_mooring(moor_name[k], moor_lon[k], moor_lat[k]),
+               moor_sel;
                on_error = e -> (@warn "mooring failed" exception = e; e))
 failed = [moor_name[moor_sel[n]] for n in eachindex(results) if results[n] isa Exception]
 println(isempty(failed) ? "all moorings done" : "FAILED: " * join(failed, ", "))
