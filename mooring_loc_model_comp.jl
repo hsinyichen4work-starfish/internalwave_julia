@@ -232,11 +232,50 @@ function break_wraps(f, z)
     return fo, zo
 end
 
-# data = gridded[model][station] structure and z = its depth axis (the 2 m grid by default)
-function plot_station_grid(q; clim, colormap, levels, cblabel, title, fname,
-                           contours = true, contour_color = (:white, 0.6), data = gridded, z = zg)
+# Colour range from the data, so that in EVERY panel at most maxfrac of the values are clipped (black + pink):
+#   default    : (lowest maxfrac/2 quantile, highest 1 - maxfrac/2 quantile) over the panels -> <= maxfrac/2 each side
+#   symmetric  : ±(largest 1 - maxfrac quantile of |f|) -> <= maxfrac outside in total
+#   zero_min   : (0, largest 1 - maxfrac quantile), for fields that are never negative (speed)
+# The limits are then rounded OUTWARD to a tidy step (can only lower the clipped fraction). Returns (clim, ticks).
+function nice_step(r; n = 6)
+    raw = r / n
+    p = 10.0^floor(log10(raw))
+    return p * first(m for m in (1, 2, 2.5, 5, 10) if m * p >= raw)
+end
+function clim_5pct(fields; symmetric = false, zero_min = false, maxfrac = 0.05)
+    vals = [filter(isfinite, vec(f)) for f in fields]
+    vals = filter(!isempty, vals)
+    if symmetric
+        m = maximum(quantile(abs.(v), 1 - maxfrac) for v in vals)
+        st = nice_step(2m); m = round(ceil(m / st) * st, digits = 10)   # round: no 0.15000000000000002
+        return (-m, m), -m:st:m
+    end
+    hi = maximum(quantile(v, zero_min ? 1 - maxfrac : 1 - maxfrac / 2) for v in vals)
+    lo = zero_min ? 0.0 : minimum(quantile(v, maxfrac / 2) for v in vals)
+    st = nice_step(hi - lo)
+    lo, hi = round(floor(lo / st) * st, digits = 10), round(ceil(hi / st) * st, digits = 10)
+    return (lo, hi), lo:st:hi
+end
+# fraction of a panel's valid values outside clim (what shows as black + pink)
+clipped_frac(f, clim) = (v = filter(isfinite, vec(f)); isempty(v) ? 0.0 : count(x -> x < clim[1] || x > clim[2], v) / length(v))
+
+# data = gridded[model][station] structure and z = its depth axis (the 2 m grid by default).
+# clim = nothing: colour range from clim_5pct over the heatmap panels (inside [t0, t1]) and the HYCOM profiles
+# (inside zlim_comp), with symmetric / zero_min as in clim_5pct; levels (contours and colorbar ticks) follow it.
+function plot_station_grid(q; clim = nothing, colormap, levels = nothing, cblabel, title, fname,
+                           contours = true, contour_color = (:white, 0.6), data = gridded, z = zg,
+                           symmetric = false, zero_min = false)
+    # the 5% is meant as AREA on the figure: fields on uneven levels (the CMEMS levels of the low-pass figures) are
+    # put on the regular 2 m grid first, so a 20 m thick level counts 10 times as much as a 2 m one
+    on_zg(f) = z == zg ? f : to_zgrid(repeat(z, 1, size(f, 2)), f, zg)
+    if clim === nothing
+        panels = [let g = data[m][name]; on_zg(getproperty(g, q)[:, t0 .<= g.time .<= t1]) end
+                  for (m, _) in plot_models for name in plot_stations]
+        append!(panels, [getproperty(hycom[name], q)[hycom[name].z .<= zlim_comp[2], :] for name in plot_stations])
+        clim, levels = clim_5pct(panels; symmetric, zero_min)
+    end
     fig = Figure(size = (1600, 1100))
-    axs, hm = Axis[], nothing
+    axs, hm, worst = Axis[], nothing, 0.0
     for (row, (mname, _)) in enumerate(plot_models), (col, name) in enumerate(plot_stations)
         g = data[mname][name]
         f = getproperty(g, q)
@@ -245,6 +284,7 @@ function plot_station_grid(q; clim, colormap, levels, cblabel, title, fname,
             xgridvisible = false, ygridvisible = false)
         hm = heatmap!(ax, tday(g.time), z, f'; colormap = colormap, colorrange = clim,
                       lowclip = :black, highclip = :magenta, nan_color = :transparent)
+        worst = max(worst, clipped_frac(on_zg(f[:, t0 .<= g.time .<= t1]), clim))
         contours && contour!(ax, tday(g.time), z, f'; levels = levels, color = contour_color, linewidth = 0.8)
         vlines!(ax, tday(hycom_time[name]); color = :cyan, linewidth = 2, linestyle = :dash)   # HYCOM times
         push!(axs, ax)
@@ -286,20 +326,20 @@ function plot_station_grid(q; clim, colormap, levels, cblabel, title, fname,
     Label(fig[0, :], title, fontsize = 20)
     outname = joinpath(figure_path, fname)
     save(outname, fig)
-    println("saved ", outname)
+    println("saved ", outname, "  clim = ", clim, ", clipped ≤ ", round(100worst, digits=1), "% per panel")
     return fig
 end
 
 ##
-plot_station_grid(:temp; clim = (6, 30), levels = 6:4:30, colormap = :thermal,
+plot_station_grid(:temp; colormap = :thermal,
     cblabel = "Potential temperature (°C)", title = "Temperature: CMEMS vs NCOM", fname = "temp_station_comp.png")
-plot_station_grid(:salt; clim = (34.5, 36.7), levels = 34.5:0.5:36.5, colormap = :haline,
+plot_station_grid(:salt; colormap = :haline,
     cblabel = "Salinity (PSU)", title = "Salinity: CMEMS vs NCOM", fname = "salt_station_comp.png")
-plot_station_grid(:u; clim = (-1.5, 1.5), levels = -1.5:0.5:1.5, colormap = :balance, contour_color = (:black, 0.3),
+plot_station_grid(:u; symmetric = true, colormap = :balance, contour_color = (:black, 0.3),
     cblabel = "u (m/s)", title = "Eastward velocity u: CMEMS vs NCOM", fname = "u_station_comp.png")
-plot_station_grid(:v; clim = (-1.5, 1.5), levels = -1.5:0.5:1.5, colormap = :balance, contour_color = (:black, 0.3),
+plot_station_grid(:v; symmetric = true, colormap = :balance, contour_color = (:black, 0.3),
     cblabel = "v (m/s)", title = "Northward velocity v: CMEMS vs NCOM", fname = "v_station_comp.png")
-plot_station_grid(:speed; clim = (0, 1.5), levels = 0:0.25:1.5, colormap = :speed, contour_color = (:black, 0.3),
+plot_station_grid(:speed; zero_min = true, colormap = :speed, contour_color = (:black, 0.3),
     cblabel = "Speed (m/s)", title = "Current speed: CMEMS vs NCOM", fname = "speed_station_comp.png")
 # :phase is cyclic, so 0° and 360° get the same colour; no contours (they would pile up on the 0/360 jump)
 plot_station_grid(:dir; clim = (0, 360), levels = 0:90:360, colormap = :phase, contours = false,
@@ -349,19 +389,19 @@ lp = Dict(mname => Dict(name => let s = store[name]
 ##
 tc = round(Int, Tcut)
 lp_kw = (data = lp, z = z_fix)
-plot_station_grid(:temp; lp_kw..., clim = (6, 30), levels = 6:4:30, colormap = :thermal,
+plot_station_grid(:temp; lp_kw..., colormap = :thermal,
     cblabel = "Potential temperature (°C)", title = "Temperature, $tc h low-pass: CMEMS vs NCOM (on CMEMS levels)",
     fname = "temp_station_comp_lp$(tc)h.png")
-plot_station_grid(:salt; lp_kw..., clim = (34.5, 36.7), levels = 34.5:0.5:36.5, colormap = :haline,
+plot_station_grid(:salt; lp_kw..., colormap = :haline,
     cblabel = "Salinity (PSU)", title = "Salinity, $tc h low-pass: CMEMS vs NCOM (on CMEMS levels)",
     fname = "salt_station_comp_lp$(tc)h.png")
-plot_station_grid(:u; lp_kw..., clim = (-1.5, 1.5), levels = -1.5:0.5:1.5, colormap = :balance, contour_color = (:black, 0.3),
+plot_station_grid(:u; lp_kw..., symmetric = true, colormap = :balance, contour_color = (:black, 0.3),
     cblabel = "u (m/s)", title = "Eastward velocity u, $tc h low-pass: CMEMS vs NCOM (on CMEMS levels)",
     fname = "u_station_comp_lp$(tc)h.png")
-plot_station_grid(:v; lp_kw..., clim = (-1.5, 1.5), levels = -1.5:0.5:1.5, colormap = :balance, contour_color = (:black, 0.3),
+plot_station_grid(:v; lp_kw..., symmetric = true, colormap = :balance, contour_color = (:black, 0.3),
     cblabel = "v (m/s)", title = "Northward velocity v, $tc h low-pass: CMEMS vs NCOM (on CMEMS levels)",
     fname = "v_station_comp_lp$(tc)h.png")
-plot_station_grid(:speed; lp_kw..., clim = (0, 1.5), levels = 0:0.25:1.5, colormap = :speed, contour_color = (:black, 0.3),
+plot_station_grid(:speed; lp_kw..., zero_min = true, colormap = :speed, contour_color = (:black, 0.3),
     cblabel = "Speed (m/s)", title = "Current speed, $tc h low-pass: CMEMS vs NCOM (on CMEMS levels)",
     fname = "speed_station_comp_lp$(tc)h.png")
 plot_station_grid(:dir; lp_kw..., clim = (0, 360), levels = 0:90:360, colormap = :phase, contours = false,
@@ -432,18 +472,11 @@ function ssh_anom(time, ssh)
     return ssh .- mean(filter(!isnan, ssh[:, keep]))
 end
 
-# colour range from the data of all models shown: 0.5-99.5th percentile, symmetric about 0 for signed fields
-function auto_clim(fields; symmetric = false)
-    vals = filter(!isnan, reduce(vcat, vec.(fields)))
-    symmetric && return (m = quantile(abs.(vals), 0.995); (-m, m))
-    return (quantile(vals, 0.005), quantile(vals, 0.995))
-end
-
 # One panel per model, side by side; time runs down the page (top = t0). Moorings on the line are marked
 # with grey dashed lines and named on a second x axis along the top; HYCOM snapshot times are cyan horizontal lines.
-function plot_hovmoller(data, q; clim, colormap, cblabel, title, fname)
+function plot_hovmoller(data, q; clim, ticks = Makie.automatic, colormap, cblabel, title, fname)
     fig = Figure(size = (550 * length(hov_models) + 150, 950))
-    axs, hm = Axis[], nothing
+    axs, hm, worst = Axis[], nothing, 0.0
     for (col, m) in enumerate(hov_models)
         h = data[m]
         time = q == :ssh ? h.time_ssh : h.time
@@ -455,6 +488,7 @@ function plot_hovmoller(data, q; clim, colormap, cblabel, title, fname)
             yticks = xticks, xgridvisible = false, ygridvisible = false)   # xticks = the (days, "mm/dd") date ticks
         hm = heatmap!(ax, lon, tday(time), f; colormap = colormap, colorrange = clim,
                       lowclip = :black, highclip = :magenta, nan_color = :transparent)
+        worst = max(worst, clipped_frac(f, clim))
         # moorings on the line: longitude at their along-line distance
         mlon = [lon[clamp(searchsortedfirst(hov[m].dist, d), 1, length(lon))] for d in hov[m].mooring_dist]
         vlines!(ax, mlon; color = (:gray20, 0.6), linestyle = :dash, linewidth = 1)
@@ -470,16 +504,17 @@ function plot_hovmoller(data, q; clim, colormap, cblabel, title, fname)
     linkaxes!(axs...)
     ylims!(axs[1], tday(t1), tday(t0))
     xlims!(axs[1], extrema(hov[hov_models[1]].lon)...)   # exactly the ends of the line, M1 to CPIES7
-    Colorbar(fig[1, length(hov_models) + 1], hm; label = cblabel)
+    Colorbar(fig[1, length(hov_models) + 1], hm; label = cblabel, ticks = ticks)
     Label(fig[-1, :], title, fontsize = 20)
     outname = joinpath(figure_path, fname)
     save(outname, fig)
-    println("saved ", outname)
+    println("saved ", outname, "  clim = ", clim, ", clipped ≤ ", round(100worst, digits=1), "% per panel")
     return fig
 end
 
 ##
-# surface fields: unfiltered and 28 h low-pass; colour ranges shared by the two versions (taken from the raw data)
+# surface fields: unfiltered and 28 h low-pass; one colour range for both versions, from clim_5pct over all their
+# panels (sea level excepted: the low-pass gets its own, much smaller, range since the tides are gone)
 hov_vars = (
     (:temp, "Surface temperature",          "Potential temperature (°C)", :thermal, false),
     (:salt, "Surface salinity",             "Salinity (PSU)",             :haline,  false),
@@ -488,13 +523,64 @@ hov_vars = (
     (:v,    "Surface northward velocity v", "v (m/s)",                    :balance, true),
 )
 for (q, long, cblabel, cmap, sym) in hov_vars
-    raw = [q == :ssh ? ssh_anom(hov[m].time_ssh, hov[m].ssh) : getproperty(hov[m], q) for m in hov_models]
-    clim = auto_clim(raw; symmetric = sym)
+    get_f(h, m) = q == :ssh ? ssh_anom(h[m].time_ssh, h[m].ssh) : getproperty(h[m], q)
+    raw, low = [get_f(hov, m) for m in hov_models], [get_f(hov_lp, m) for m in hov_models]
+    clim, ticks = clim_5pct(q == :ssh ? raw : vcat(raw, low); symmetric = sym)
     ssh_note = q == :ssh ? " (CMEMS: total sea level, incl. tides)" : ""
-    plot_hovmoller(hov, q; clim = clim, colormap = cmap, cblabel = cblabel,
+    plot_hovmoller(hov, q; clim = clim, ticks = ticks, colormap = cmap, cblabel = cblabel,
         title = "$long along $(replace(transect_name, "_" => " – "))$ssh_note", fname = "hov_surf_$(q).png")
     # low-pass: sea level gets its own (smaller) range, since the tides are gone
-    clim_lp = q == :ssh ? auto_clim([ssh_anom(hov_lp[m].time_ssh, hov_lp[m].ssh) for m in hov_models]; symmetric = true) : clim
-    plot_hovmoller(hov_lp, q; clim = clim_lp, colormap = cmap, cblabel = cblabel,
+    q == :ssh && ((clim, ticks) = clim_5pct(low; symmetric = true))
+    plot_hovmoller(hov_lp, q; clim = clim, ticks = ticks, colormap = cmap, cblabel = cblabel,
         title = "$long along $(replace(transect_name, "_" => " – ")), $tc h low-pass", fname = "hov_surf_$(q)_lp$(tc)h.png")
+end
+
+##
+# --- Hovmöller at fixed depths below the surface (temp, salt, u, v) ---
+# Both models are interpolated linearly in z to exactly `d` m. NCOM's 5 m levels contain 100 and 200 m; CMEMS is
+# interpolated between its two levels around d (e.g. 92/110 m and 186/222 m). Only those two levels are read.
+# As for the stations, the level depths are taken as depth below the surface (the moving surface is ignored).
+hov_depths = [100.0, 200.0]
+hov_level_clim = Dict(:u => (-1.0, 1.0), :v => (-1.0, 1.0))   # minimum colour ranges at depth: widened by clim_5pct if needed
+
+function load_transect_level(fname, d)
+    NCDataset(fname) do ds
+        z = ds["z"][:]                                   # ascending, negative down
+        k = clamp(searchsortedlast(z, -d), 1, length(z) - 1)
+        w = (-d - z[k]) / (z[k+1] - z[k])                # 0 at level k, 1 at level k+1
+        (0 <= w <= 1) || error("$d m is outside the levels of $fname")
+        rd(v) = (a = Float64.(nomissing(ds[v][k:k+1, :, :], NaN)); (1 - w) .* a[1, :, :] .+ w .* a[2, :, :])   # (x, time)
+        (time = ds["time"][:], temp = rd("temp"), salt = rd("salt"), u = rd("u"), v = rd("v"))
+    end
+end
+
+hov_level_vars = (
+    (:temp, "Temperature",          "Potential temperature (°C)", :thermal, false),
+    (:salt, "Salinity",             "Salinity (PSU)",             :haline,  false),
+    (:u,    "Eastward velocity u",  "u (m/s)",                    :balance, true),
+    (:v,    "Northward velocity v", "v (m/s)",                    :balance, true),
+)
+for d in hov_depths
+    dtag = "$(round(Int, d))m"
+    lev = Dict(m => load_transect_level(f, d) for (m, f, _) in hov_files if m in hov_models)
+    lev_lp = Dict(m => (time = l.time, temp = filter_rows(l.time, l.temp, Tcut, "low"),
+                        salt = filter_rows(l.time, l.salt, Tcut, "low"),
+                        u = filter_rows(l.time, l.u, Tcut, "low"), v = filter_rows(l.time, l.v, Tcut, "low"))
+                  for (m, l) in lev)
+    println("Hovmöller at $d m: loaded ", join(hov_models, ", "))
+    for (q, long, cblabel, cmap, sym) in hov_level_vars
+        # shared by raw and low-pass: clim_5pct over all their panels, never narrower than hov_level_clim
+        clim, ticks = clim_5pct(vcat([getproperty(lev[m], q) for m in hov_models],
+                                     [getproperty(lev_lp[m], q) for m in hov_models]); symmetric = sym)
+        if haskey(hov_level_clim, q) && (hov_level_clim[q][1] < clim[1] || hov_level_clim[q][2] > clim[2])
+            clim = (min(clim[1], hov_level_clim[q][1]), max(clim[2], hov_level_clim[q][2]))
+            ticks = Makie.automatic
+        end
+        plot_hovmoller(lev, q; clim = clim, ticks = ticks, colormap = cmap, cblabel = cblabel,
+            title = "$long at $(round(Int, d)) m along $(replace(transect_name, "_" => " – "))",
+            fname = "hov_$(dtag)_$(q).png")
+        plot_hovmoller(lev_lp, q; clim = clim, ticks = ticks, colormap = cmap, cblabel = cblabel,
+            title = "$long at $(round(Int, d)) m along $(replace(transect_name, "_" => " – ")), $tc h low-pass",
+            fname = "hov_$(dtag)_$(q)_lp$(tc)h.png")
+    end
 end
