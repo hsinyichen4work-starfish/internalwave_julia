@@ -146,9 +146,13 @@ for name in mooring_to_comp
             println("[$label] $name: no file ($fname), skipped")
             continue
         end
-        if label == "CMEMS" && NCDataset(ds -> haskey(ds.dim, "x"), fname)   # transect file
-            cmems_tr[name] = load_cmems_transect(name)
-            println("[$label] $name: transect, size(temp) = ", size(cmems_tr[name].temp))
+        if NCDataset(ds -> haskey(ds.dim, "x"), fname)   # transect file, not a point
+            if label == "CMEMS"
+                cmems_tr[name] = load_cmems_transect(name)
+                println("[$label] $name: transect, size(temp) = ", size(cmems_tr[name].temp))
+            else
+                println("[$label] $name: transect file, read in the Hovmöller section")
+            end
             continue
         end
         store[name] = loader(name)
