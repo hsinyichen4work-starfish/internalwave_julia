@@ -1,23 +1,28 @@
 using NCDatasets
 
-src_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon/joined_ext"
-out_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon/mooring_merged"
+src_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"
+out_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/mooring_merged"
 mkpath(out_dir)
 
 files = filter(f -> endswith(f, ".nc"), readdir(src_dir))
 instruments = unique(first.(split.(files, '.')))
 filter!(!=("ocean"), instruments)   # ocean.*.nc are empty (0 time records)
+# skip ROMS model output (roms_dia, roms_his, roms_avg, roms_rst, ...); only merge mooring/station files
+filter!(inst -> !occursin(r"(^|_)(dia|his|avg|rst)$", inst), instruments)
 
 for inst in instruments
     # the timestamp in the name is yyyymmddHHMMSS, so sorting by name == sorting by time
     fnames = sort(joinpath.(src_dir, filter(f -> startswith(f, inst * "."), files)))
     outfile = joinpath(out_dir, inst * ".nc")
+    # skip instruments finished by an earlier run (unfinished ones only exist as .tmp)
+    isfile(outfile) && (println(inst, ": already done, skipping"); continue)
+    tmpfile = outfile * ".tmp"
 
     NCDataset(fnames; aggdim = "time") do src
         t = src["ocean_time"][:]
         @assert issorted(t) && allunique(t) "$inst: ocean_time is not strictly increasing"
 
-        NCDataset(outfile, "c") do dst
+        NCDataset(tmpfile, "c") do dst
             for name in keys(src)
                 v = src[name]
                 attrib = Dict(v.attrib)
@@ -27,6 +32,8 @@ for inst in instruments
             end
             dst.attrib["source_files"] = join(basename.(fnames), ", ")
         end
+        mv(tmpfile, outfile; force = true)
         println(inst, ": ", length(fnames), " files, ", length(t), " records -> ", outfile)
     end
+    GC.gc()   # free this instrument's arrays before opening the next 196 files
 end
