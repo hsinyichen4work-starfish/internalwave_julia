@@ -57,6 +57,19 @@ lat_rho_roms_ext = extend_grid(Float64.(coalesce.(lat_rho_roms, NaN)); west = n_
 # same extension, but on all four sides (south too)
 lon_rho_roms_ext4 = extend_grid(Float64.(coalesce.(lon_rho_roms, NaN)); west = n_ext, east = n_ext, south = n_ext, north = n_ext)
 lat_rho_roms_ext4 = extend_grid(Float64.(coalesce.(lat_rho_roms, NaN)); west = n_ext, east = n_ext, south = n_ext, north = n_ext)
+# +222 cells west/east, none south, +666 cells (~600 km) north: the region for the 2700 m grid
+n_ext_n = 666
+lon_rho_roms_extN = extend_grid(Float64.(coalesce.(lon_rho_roms, NaN)); west = n_ext, east = n_ext, north = n_ext_n)
+lat_rho_roms_extN = extend_grid(Float64.(coalesce.(lat_rho_roms, NaN)); west = n_ext, east = n_ext, north = n_ext_n)
+# middle point of that region (average of the center rho points), to use as `mid` for the 2700 m grid
+ni_N, nj_N = size(lon_rho_roms_extN)
+ic, jc = (ni_N + 1) ÷ 2 : ni_N ÷ 2 + 1, (nj_N + 1) ÷ 2 : nj_N ÷ 2 + 1
+mid_extN = [mean(lon_rho_roms_extN[ic, jc]), mean(lat_rho_roms_extN[ic, jc])]
+# same physical size in 2700 m cells (the 900 m grid has nx = 684, ny = 854 interior cells)
+nx_2700 = round(Int, (684 + 2n_ext) * 900 / 2700)
+ny_2700 = round(Int, (854 + n_ext_n) * 900 / 2700)
+println("extended region middle point: lon = ", mid_extN[1], ", lat = ", mid_extN[2])
+println("same size at 2700 m: nx = ", nx_2700, ", ny = ", ny_2700)
 
 ##
 mor_loc = NCDataset(mooring_loc) do ds
@@ -164,3 +177,23 @@ add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 3, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)
 save(joinpath(figure_path, "bathymetry_mooring_roms900m_ext.png"), fig; px_per_unit = 3.2)
+
+## region for the 2700 m grid: 900m ROMS extended +222 cells W/E, +666 cells N, none S
+fig = Figure(size = (700, 670))
+ax = topdown_axis3(fig[1, 1]; title = "Bathymetry, region for the 2700 m grid")
+sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
+                       colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
+Colorbar(fig[1, 2], sp, label = "Depth (m)")
+for (lon, lat, color, linestyle, label) in
+        ((lon_rho_roms_extN, lat_rho_roms_extN, :purple, :solid, "900m ROMS extended (+$(n_ext) W/E, +$(n_ext_n) N)"),
+         (lon_rho_9,         lat_rho_9,         :black,  :dash,  "900m resolution NCOM"),
+         (lon_rho_roms,      lat_rho_roms,      :red,    :solid, "900m resolution ROMS"))
+    lon_b, lat_b = grid_boundary(lon, lat)
+    lines!(ax, lon_b, lat_b, zeros(length(lon_b)); color, linestyle, linewidth = 2, label)
+end
+add_mooring!(ax; labels = false)
+scatter!(ax, Point3f(mid_extN[1], mid_extN[2], 0); marker = :xcross, markersize = 12, color = :red,
+         strokecolor = :black, strokewidth = 0.75, overdraw = true, label = "middle point")
+Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
+ax.protrusions = (30, 30, 50, 30)
+save(joinpath(figure_path, "bathymetry_mooring_roms900m_extN$(n_ext_n).png"), fig; px_per_unit = 3.2)

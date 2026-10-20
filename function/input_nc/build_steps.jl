@@ -27,6 +27,8 @@ If `cfg.path_figure` is set, the two match_topo_check figures are saved there.
 function grd_build(cfg)
     # Build the grid & check the size
     mid, rot_ang = gid_middle(cfg.mid_iter)
+    # a middle point given in cfg replaces the mooring-based one; the rotation is kept
+    mid = get(cfg, :mid, mid)
     grd, actual_dx_APPROX, actual_dy_APPROX = grid_setting(mid, rot_ang, cfg.dx, cfg.nx, cfg.ny)
     println(cfg.dx, "m : actual_dx_APPROX = ", num2str(actual_dx_APPROX),
         ", actual_dy_APPROX = ", num2str(actual_dy_APPROX))
