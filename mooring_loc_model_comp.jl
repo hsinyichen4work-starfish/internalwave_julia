@@ -584,3 +584,127 @@ for d in hov_depths
             fname = "hov_$(dtag)_$(q)_lp$(tc)h.png")
     end
 end
+
+
+## trasnect comp on hycom snapshot
+# ============================================================================================================
+# Vertical sections along the M1 -> CPIES7 transect at the HYCOM snapshot times: x = longitude, y = depth
+# ============================================================================================================
+# One figure per quantity and snapshot, 3 panels (CMEMS | NCOM | HYCOM), each model on its own levels.
+# CMEMS (6-hourly) and NCOM (hourly) are taken at their record nearest to the HYCOM time (they coincide exactly).
+# Low-pass: CMEMS and NCOM are 28 h low-passed in time at every (z, x) point and then sampled at the snapshot;
+# HYCOM is too sparse to filter and is shown unfiltered in the low-pass figures too.
+# Speed and direction come from the (low-passed) u, v. Below the bottom is NaN and shows the grey background.
+zlim_tr = (0.0, 200.0)
+zg_tr = collect(zlim_tr[1]:2.0:zlim_tr[2])   # regular grid, only used to compute the colour range by area
+tr_path = joinpath(figure_path, "transect_snap")
+mkpath(tr_path)
+
+tr_files = (("CMEMS", joinpath(CMEMS_mooring_path, "GLOBAL_$transect_name.nc"), true),
+            ("NCOM",  joinpath(NCOM_mooring_path,  "NCOM_$transect_name.nc"),   true),
+            ("HYCOM", joinpath(HYCOM_mooring_path, "HYCOM_$transect_name.nc"),  false))   # (model, file, low-pass?)
+tr_snap = NCDataset(ds -> filter(t -> t0 <= t <= t1, ds["time"][:]), tr_files[3][2])
+
+# sections at the times tsnap: raw[q] and lp[q] are (z, x, snapshot), z surface-first, positive down.
+# Only levels down to zlim_tr[2] + 100 m are read (one level past 200 m so the deepest cells are complete).
+function load_transect_sections(fname, tsnap; lowpass)
+    NCDataset(fname) do ds
+        z, time = ds["z"][:], ds["time"][:]
+        kz = findall(z .>= -(zlim_tr[2] + 100))
+        it = [argmin(abs.(time .- t)) for t in tsnap]
+        raw, lp = Dict{Symbol,Array{Float64,3}}(), Dict{Symbol,Array{Float64,3}}()
+        for q in (:temp, :salt, :u, :v)
+            a = Float64.(nomissing(ds[String(q)][kz, :, :], NaN))   # (z, x, time)
+            nz, nx, nt = size(a)
+            raw[q] = flipz(a[:, :, it])
+            # each row of the reshaped (z*x, time) field is the time series at one point of the section
+            lp[q] = lowpass ? flipz(reshape(filter_rows(time, reshape(a, nz * nx, nt), Tcut, "low")[:, it], nz, nx, :)) : raw[q]
+        end
+        for d in (raw, lp)
+            d[:speed] = hypot.(d[:u], d[:v])
+            d[:dir]   = mod.(atand.(d[:u], d[:v]), 360)   # direction toward, compass
+        end
+        (lon = ds["lon"][:], dist = ds["dist"][:], z = flipz(abs.(z[kz])), time = time[it],
+         mooring = ds["mooring"][:], mooring_dist = ds["mooring_dist"][:], raw = raw, lp = lp)
+    end
+end
+
+tr_models = String[]
+sec = Dict{String,Any}()
+for (m, f, dolp) in tr_files
+    if !isfile(f)
+        println("[$m] no transect file ($f): left out of the section figures")
+        continue
+    end
+    sec[m] = load_transect_sections(f, tr_snap; lowpass = dolp)
+    push!(tr_models, m)
+    println("[$m] sections at ", Dates.format.(sec[m].time, "mm/dd HH:MM"), ", size(temp) = ", size(sec[m].raw[:temp]))
+end
+
+# kind = :raw or :lp, k = snapshot index
+function plot_transect_snap(kind, q, k; clim, levels, colormap, contours = true, contour_color = (:white, 0.6),
+                            cblabel, title, fname)
+    fig = Figure(size = (1800, 650))
+    axs, hm, worst = Axis[], nothing, 0.0
+    for (col, m) in enumerate(tr_models)
+        s = sec[m]
+        f = s[kind][q][:, :, k]   # (z, x)
+        ax = Axis(fig[1, col]; xlabel = "Longitude (°E)", ylabel = col == 1 ? "Depth (m)" : "",
+            yreversed = true, backgroundcolor = :gray75, xgridvisible = false, ygridvisible = false)
+        hm = heatmap!(ax, s.lon, s.z, f'; colormap = colormap, colorrange = clim,
+                      lowclip = :black, highclip = :magenta, nan_color = :transparent)
+        worst = max(worst, clipped_frac(to_zgrid(repeat(s.z, 1, size(f, 2)), f, zg_tr), clim))
+        contours && contour!(ax, s.lon, s.z, f'; levels = levels, color = contour_color, linewidth = 0.8)
+        # moorings on the line, named on a second x axis along the top (as in the Hovmöller figures)
+        mlon = [s.lon[clamp(searchsortedfirst(s.dist, d), 1, length(s.lon))] for d in s.mooring_dist]
+        vlines!(ax, mlon; color = (:gray20, 0.6), linestyle = :dash, linewidth = 1)
+        axt = Axis(fig[1, col]; xaxisposition = :top, xticks = (mlon, s.mooring), xticklabelsize = 11,
+            xticklabelrotation = pi / 3, xgridvisible = false, ygridvisible = false)
+        hidespines!(axt); hideydecorations!(axt)
+        linkxaxes!(ax, axt)
+        lbl = m == "HYCOM" && kind == :lp ? "$m (snapshot, unfiltered)" : m
+        Label(fig[0, col], "$lbl  $(Dates.format(s.time[k], "mm/dd HH:MM"))", fontsize = 18, font = :bold, tellwidth = false)
+        col > 1 && hideydecorations!(ax; ticks = false)
+        push!(axs, ax)
+    end
+    linkaxes!(axs...)
+    ylims!(axs[1], zlim_tr[2], zlim_tr[1])
+    xlims!(axs[1], extrema(sec[tr_models[1]].lon)...)
+    Colorbar(fig[1, length(tr_models) + 1], hm; label = cblabel, ticks = levels)
+    Label(fig[-1, :], title, fontsize = 20)
+    outname = joinpath(tr_path, fname)
+    save(outname, fig)
+    println("saved ", outname, "  clim = ", clim, ", clipped ≤ ", round(100worst, digits=1), "% per panel")
+    return fig
+end
+
+##
+# one colour range per quantity, shared by all snapshots, models and both versions (clim_5pct over their 0-200 m
+# panels, put on the 2 m grid so the 5% is by area); direction uses the fixed cyclic 0-360 range
+tr_vars = (
+    (:temp,  "Temperature",          "Potential temperature (°C)", :thermal, (;),                  (:white, 0.6)),
+    (:salt,  "Salinity",             "Salinity (PSU)",             :haline,  (;),                  (:white, 0.6)),
+    (:u,     "Eastward velocity u",  "u (m/s)",                    :balance, (symmetric = true,),  (:black, 0.3)),
+    (:v,     "Northward velocity v", "v (m/s)",                    :balance, (symmetric = true,),  (:black, 0.3)),
+    (:speed, "Current speed",        "Speed (m/s)",                :speed,   (zero_min = true,),   (:black, 0.3)),
+    (:dir,   "Current direction",    "Direction toward (° clockwise from north)", :phase, nothing, nothing),
+)
+tr_title = replace(transect_name, "_" => " – ")
+for (q, long, cblabel, cmap, ckw, ccol) in tr_vars
+    if ckw === nothing   # direction: cyclic, no contours (they would pile up on the 0/360 jump)
+        clim, levels = (0, 360), 0:90:360
+    else
+        panels = [let s = sec[m], f = s[kind][q][:, :, k]; to_zgrid(repeat(s.z, 1, size(f, 2)), f, zg_tr) end
+                  for m in tr_models for kind in (:raw, :lp) for k in eachindex(tr_snap)]
+        clim, levels = clim_5pct(panels; ckw...)
+    end
+    for k in eachindex(tr_snap)
+        dtag, dstr = Dates.format(tr_snap[k], "yyyymmdd"), Dates.format(tr_snap[k], "yyyy-mm-dd HH:MM")
+        kw = (clim = clim, levels = levels, colormap = cmap, contours = ckw !== nothing,
+              contour_color = something(ccol, (:white, 0.6)), cblabel = cblabel)
+        plot_transect_snap(:raw, q, k; kw..., title = "$long along $tr_title, $dstr (HYCOM snapshot)",
+            fname = "tr_$(q)_$(dtag).png")
+        plot_transect_snap(:lp, q, k; kw..., title = "$long along $tr_title, $dstr, $tc h low-pass (HYCOM unfiltered)",
+            fname = "tr_$(q)_$(dtag)_lp$(tc)h.png")
+    end
+end

@@ -70,15 +70,17 @@ read_ncom_flatfile(path_ff, s::NamedTuple) =
     read_ncom_flatfile(path_ff, s.fldname, s.igrd, s.jgrd, s.nest, s.datestr_in, s.timetag, s.appd, s.nlev, s.isface)
 
 """
-    ncom_file_list(path_setup, fld) -> Vector{NamedTuple}
+    ncom_file_list(path_setup, fld; nest = nothing) -> Vector{NamedTuple}
 
-All `fld*` flat files in `path_setup`, parsed and sorted chronologically
+All `fld*` flat files in `path_setup` (only those of `nest` when given,
+since one folder holds every nest), parsed and sorted chronologically
 by (date tag, time tag) rather than trusting directory order.
 """
-function ncom_file_list(path_setup::AbstractString, fld::AbstractString)
+function ncom_file_list(path_setup::AbstractString, fld::AbstractString; nest::Union{Nothing,Integer} = nothing)
     names = filter(startswith(fld), readdir(path_setup))
-    isempty(names) && error("No $(fld)* files found in $path_setup")
     parsed = extract_ncom_name.(names)
+    nest === nothing || filter!(s -> s.nest == nest, parsed)
+    isempty(parsed) && error("No $(fld)* files" * (nest === nothing ? "" : " of nest $nest") * " found in $path_setup")
     return sort(parsed; by = s -> s.datestr_in * s.timetag)
 end
 
@@ -126,6 +128,62 @@ function read_ovgrdA(opath::AbstractString, nest::Integer)
     vgrd = Array{Float32}(undef, dims[1], dims[2], dims[3])
     open(io -> read!(io, vgrd), joinpath(opath, "ovgrd_$(nest).A"), "r")
     return Float64.(ntoh.(vgrd))
+end
+
+"""
+    read_ohgrd_nc(file) -> (igrd, jgrd, lon, lat)
+
+Same as `read_ohgrd`, from an ohgrd_[nest].nc file (for nests that have
+no ohgrd_[nest].B/.A, e.g. nest 1).
+"""
+function read_ohgrd_nc(file::AbstractString)
+    lon = ncread(file, "lon")
+    lat = ncread(file, "lat")
+    igrd, jgrd = size(lon)
+    return igrd, jgrd, lon, lat
+end
+
+"""
+    ovgrd_from_ohgrd_nc(file) -> vgrd
+
+Rebuild what ovgrd_[nest].A holds, (igrd, jgrd, lo+1) interface depths,
+from zw3/kb/h/mask of an ohgrd_[nest].nc file. zw3 is only defined down
+to interface kb, so the rest is filled the way ovgrd_*.A does it:
+interface kb+1 is the bottom (-h) and every deeper layer keeps the
+thickness of layer kb. Land columns are the kb = 40 sigma column
+scaled to the unmasked depth hu (0.1 m where hu is not below sea
+level), extended the same way. Checked against ovgrd_2.A.
+"""
+function ovgrd_from_ohgrd_nc(file::AbstractString)
+    zw = ncread(file, "zw3")
+    kb = ncread(file, "kb")
+    h = ncread(file, "h")
+    hu = ncread(file, "hu")
+    mask = ncread(file, "mask")
+    nw = size(zw, 3)
+
+    # sigma fractions z/z_bottom of the shallowest (kb = 40) columns
+    ks = 40
+    Is = findfirst(I -> mask[I] == 1 && kb[I] == ks, CartesianIndices(mask))
+    Is === nothing && error("ovgrd_from_ohgrd_nc: no kb = $ks sea point in $file")
+    sig = [zw[Is, 1:ks]; h[Is]] ./ h[Is]
+
+    vgrd = similar(zw)
+    for I in CartesianIndices(mask)
+        if mask[I] == 1
+            k = kb[I]
+            vgrd[I, 1:k] .= view(zw, I, 1:k)
+            vgrd[I, k+1] = h[I]
+        else
+            k = ks
+            vgrd[I, 1:k+1] .= (hu[I] < 0 ? hu[I] : -0.1) .* sig
+        end
+        dz = vgrd[I, k] - vgrd[I, k+1]
+        for kk in k+2:nw
+            vgrd[I, kk] = vgrd[I, kk-1] - dz
+        end
+    end
+    return vgrd
 end
 
 """

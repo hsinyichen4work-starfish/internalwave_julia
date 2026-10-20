@@ -98,14 +98,14 @@ function make_bry_need_grid(lon::AbstractMatrix, lat::AbstractMatrix, vgrd2::Abs
 end
 
 """
-    make_bry_need_ssh(igrd, jgrd, par_name, path_setup, boundary_path, lndsea = nothing) -> parinie
+    make_bry_need_ssh(igrd, jgrd, par_name, path_setup, boundary_path, lndsea = nothing; nest = nothing) -> parinie
 
 Write `<par_name>_ssh.nc` from the seahgt* flat files. `lndsea` is the
 (igrd, jgrd) land/sea mask (1 = sea, 0 = land); land points are set to
 NaN so the isnan-based masking in h2r works.
 """
-function make_bry_need_ssh(igrd, jgrd, par_name, path_setup, boundary_path, lndsea = nothing)
-    parsed = ncom_file_list(path_setup, "seahgt")
+function make_bry_need_ssh(igrd, jgrd, par_name, path_setup, boundary_path, lndsea = nothing; nest = nothing)
+    parsed = ncom_file_list(path_setup, "seahgt"; nest)
     nfiles = length(parsed)
 
     parinie = par_name * "_ssh.nc"
@@ -125,18 +125,18 @@ function make_bry_need_ssh(igrd, jgrd, par_name, path_setup, boundary_path, lnds
 end
 
 """
-    make_bry_need_temp(igrd, jgrd, lo, valid_lay, par_name, path_setup, boundary_path, lndsea = nothing) -> parinit
+    make_bry_need_temp(igrd, jgrd, lo, valid_lay, par_name, path_setup, boundary_path, lndsea = nothing; nest = nothing) -> parinit
 
 Write `<par_name>_ts.nc`: layer_temperature (Celsius) from seatmp* and
 layer_salinity from salint*. Land and below-bottom points
 (`valid_lay` = NCOM's kb) are NaN.
 """
-function make_bry_need_temp(igrd, jgrd, lo, valid_lay, par_name, path_setup, boundary_path, lndsea = nothing)
+function make_bry_need_temp(igrd, jgrd, lo, valid_lay, par_name, path_setup, boundary_path, lndsea = nothing; nest = nothing)
     land3d = lndsea === nothing ? nothing : (_ncom_mask3d(lndsea, valid_lay, lo) .== 0)
 
     # temperature and salinity are parsed and sorted separately
-    parsed_t = ncom_file_list(path_setup, "seatmp")
-    parsed_s = ncom_file_list(path_setup, "salint")
+    parsed_t = ncom_file_list(path_setup, "seatmp"; nest)
+    parsed_s = ncom_file_list(path_setup, "salint"; nest)
     nfiles_t, nfiles_s = length(parsed_t), length(parsed_s)
     nfiles_s == nfiles_t ||
         @warn "Found $nfiles_t seatmp files but $nfiles_s salint files -- check your data folder."
@@ -163,18 +163,18 @@ function make_bry_need_temp(igrd, jgrd, lo, valid_lay, par_name, path_setup, bou
 end
 
 """
-    make_bry_need_vel(igrd, jgrd, lo, valid_lay, grdang, par_name, path_setup, boundary_path, lndsea = nothing) -> pariniu
+    make_bry_need_vel(igrd, jgrd, lo, valid_lay, grdang, par_name, path_setup, boundary_path, lndsea = nothing; nest = nothing) -> pariniu
 
 Write `<par_name>_uv.nc` from uucurr*/vvcurr*: faces averaged to cell
 centers, rotated to true east/north with `grdang` (degrees, (igrd, jgrd)),
 then masked. Also writes MT (days since 1900-12-31), one per time step.
 """
-function make_bry_need_vel(igrd, jgrd, lo, valid_lay, grdang, par_name, path_setup, boundary_path, lndsea = nothing)
+function make_bry_need_vel(igrd, jgrd, lo, valid_lay, grdang, par_name, path_setup, boundary_path, lndsea = nothing; nest = nothing)
     land3d = lndsea === nothing ? nothing : (_ncom_mask3d(lndsea, valid_lay, lo) .== 0)
 
     # u and v are parsed and sorted separately
-    parsed_u = ncom_file_list(path_setup, "uucurr")
-    parsed_v = ncom_file_list(path_setup, "vvcurr")
+    parsed_u = ncom_file_list(path_setup, "uucurr"; nest)
+    parsed_v = ncom_file_list(path_setup, "vvcurr"; nest)
     nfiles_u, nfiles_v = length(parsed_u), length(parsed_v)
     nfiles_v == nfiles_u ||
         error("Found $nfiles_u uucurr files but $nfiles_v vvcurr files -- check your data folder.")
@@ -202,13 +202,24 @@ function make_bry_need_vel(igrd, jgrd, lo, valid_lay, grdang, par_name, path_set
     return pariniu
 end
 
-# the pieces of the static NCOM grid the converters need
+# the pieces of the static NCOM grid the converters need. Nests without
+# ohgrd/ovgrd .B/.A files (nest 1) take everything from ohgrd_[nest].nc.
 function _ncom_grid_info(grid_process_path, nest)
-    igrd, jgrd, lon, lat = read_ohgrd(grid_process_path, nest)
-    dimz = parse.(Int, split(read(joinpath(grid_process_path, "ovgrd_$(nest).B"), String)))[3]
-    return (igrd = igrd, jgrd = jgrd, lon = lon, lat = lat, lo = dimz - 1,
-            ohgrd = joinpath(grid_process_path, "ohgrd_$(nest).nc"))
+    ohgrd = joinpath(grid_process_path, "ohgrd_$(nest).nc")
+    if isfile(joinpath(grid_process_path, "ohgrd_$(nest).B"))
+        igrd, jgrd, lon, lat = read_ohgrd(grid_process_path, nest)
+        dimz = parse.(Int, split(read(joinpath(grid_process_path, "ovgrd_$(nest).B"), String)))[3]
+    else
+        igrd, jgrd, lon, lat = read_ohgrd_nc(ohgrd)
+        dimz = ncsize(ohgrd, "zw3")[3]
+    end
+    return (igrd = igrd, jgrd = jgrd, lon = lon, lat = lat, lo = dimz - 1, ohgrd = ohgrd)
 end
+
+# interface depths (igrd, jgrd, lo+1): ovgrd_[nest].A, or rebuilt from ohgrd_[nest].nc
+_ncom_vgrd(grid_process_path, nest) =
+    isfile(joinpath(grid_process_path, "ovgrd_$(nest).A")) ? read_ovgrdA(grid_process_path, nest) :
+        ovgrd_from_ohgrd_nc(joinpath(grid_process_path, "ohgrd_$(nest).nc"))
 
 """
     make_bry_need_nc(par_name, boundary_path, remake = false; kwargs...) -> (par_grd, parinie, parinit, pariniu)
@@ -218,7 +229,8 @@ exist in `boundary_path` (lthick, ssh, ts, uv), building the missing ones
 — or all of them when `remake` is true — and return their file names.
 
 Keywords: `parent_data_path` (holds one folder of flat files per
-`par_name`), `grid_process_path` (ohgrd/ovgrd files), `nest`.
+`par_name`), `grid_process_path` (ohgrd/ovgrd files), `nest` (2 = the
+"2o" files, 1 = the "1o" files).
 """
 function make_bry_need_nc(par_name::AbstractString, boundary_path::AbstractString, remake::Bool = false;
                           parent_data_path::AbstractString = NCOM_DATA_PATH,
@@ -242,22 +254,22 @@ function make_bry_need_nc(par_name::AbstractString, boundary_path::AbstractStrin
 
     if make_g
         println("create ", par_grd)
-        make_bry_need_grid(g.lon, g.lat, read_ovgrdA(grid_process_path, nest), par_name, boundary_path)
+        make_bry_need_grid(g.lon, g.lat, _ncom_vgrd(grid_process_path, nest), par_name, boundary_path)
     end
     if make_u
         println("create ", pariniu)
         make_bry_need_vel(g.igrd, g.jgrd, g.lo, valid_lay, ncread(g.ohgrd, "ang"), par_name, path_setup,
-            boundary_path, mask)
+            boundary_path, mask; nest)
     end
     MT = ncread(joinpath(boundary_path, pariniu), "MT")
     if make_e
         println("create ", parinie)
-        make_bry_need_ssh(g.igrd, g.jgrd, par_name, path_setup, boundary_path, mask)
+        make_bry_need_ssh(g.igrd, g.jgrd, par_name, path_setup, boundary_path, mask; nest)
         _add_MT(joinpath(boundary_path, parinie), MT)
     end
     if make_t
         println("create ", parinit)
-        make_bry_need_temp(g.igrd, g.jgrd, g.lo, valid_lay, par_name, path_setup, boundary_path, mask)
+        make_bry_need_temp(g.igrd, g.jgrd, g.lo, valid_lay, par_name, path_setup, boundary_path, mask; nest)
         _add_MT(joinpath(boundary_path, parinit), MT)
     end
 
@@ -275,17 +287,17 @@ function _write_2d_series!(ds, varname, parsed, path_setup, land)
 end
 
 """
-    make_frc_need_wind(igrd, jgrd, grdang, par_name, path_setup, forcing_path, lndsea = nothing) -> pariniw
+    make_frc_need_wind(igrd, jgrd, grdang, par_name, path_setup, forcing_path, lndsea = nothing; nest = nothing) -> pariniw
 
 Write `<par_name>_wnd.nc` from stresu*/stresv*. The stresses are already
 at cell centers (no face averaging) but still along the model's rotated
 grid axes, so they are rotated to true east/north with `grdang`.
 """
-function make_frc_need_wind(igrd, jgrd, grdang, par_name, path_setup, forcing_path, lndsea = nothing)
+function make_frc_need_wind(igrd, jgrd, grdang, par_name, path_setup, forcing_path, lndsea = nothing; nest = nothing)
     land = lndsea === nothing ? nothing : (lndsea .== 0)
 
-    parsed_u = ncom_file_list(path_setup, "stresu")
-    parsed_v = ncom_file_list(path_setup, "stresv")
+    parsed_u = ncom_file_list(path_setup, "stresu"; nest)
+    parsed_v = ncom_file_list(path_setup, "stresv"; nest)
     nfiles_u, nfiles_v = length(parsed_u), length(parsed_v)
     nfiles_v == nfiles_u ||
         error("Found $nfiles_u stresu files but $nfiles_v stresv files -- check your data folder.")
@@ -313,22 +325,22 @@ function make_frc_need_wind(igrd, jgrd, grdang, par_name, path_setup, forcing_pa
 end
 
 """
-    make_frc_need_flux(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing) -> parinis
+    make_frc_need_flux(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing; nest = nothing) -> parinis
 
 Write `<par_name>_flx.nc`: heaflx, salflx, solflx. MT comes from the
 heaflx file list; the three fields are assumed to share time steps.
 """
-function make_frc_need_flux(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing)
+function make_frc_need_flux(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing; nest = nothing)
     land = lndsea === nothing ? nothing : (lndsea .== 0)
     fields = ["heaflx", "salflx", "solflx"]
 
     parinis = par_name * "_flx.nc"
     file = _create_parent_nc(joinpath(forcing_path, parinis), igrd, jgrd, nothing,
         [fld => ("xi", "eta", "time") for fld in fields])
-    parsed_ref = ncom_file_list(path_setup, fields[1])
+    parsed_ref = ncom_file_list(path_setup, fields[1]; nest)
     NCDataset(file, "a") do ds
         for fld in fields
-            parsed = ncom_file_list(path_setup, fld)
+            parsed = ncom_file_list(path_setup, fld; nest)
             length(parsed) == length(parsed_ref) ||
                 @warn "Found $(length(parsed)) $fld files but $(length(parsed_ref)) $(fields[1]) files -- check your data folder."
             _write_2d_series!(ds, fld, parsed, path_setup, land)
@@ -341,13 +353,13 @@ function make_frc_need_flux(igrd, jgrd, par_name, path_setup, forcing_path, lnds
 end
 
 """
-    make_frc_need_pres(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing) -> parinip
+    make_frc_need_pres(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing; nest = nothing) -> parinip
 
 Write `<par_name>_pres.nc`: slpres.
 """
-function make_frc_need_pres(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing)
+function make_frc_need_pres(igrd, jgrd, par_name, path_setup, forcing_path, lndsea = nothing; nest = nothing)
     land = lndsea === nothing ? nothing : (lndsea .== 0)
-    parsed = ncom_file_list(path_setup, "slpres")
+    parsed = ncom_file_list(path_setup, "slpres"; nest)
 
     parinip = par_name * "_pres.nc"
     file = _create_parent_nc(joinpath(forcing_path, parinip), igrd, jgrd, nothing,
@@ -389,19 +401,19 @@ function make_frc_need_nc(par_name::AbstractString, forcing_path::AbstractString
 
     if make_g
         println("create ", par_grd)
-        make_bry_need_grid(g.lon, g.lat, read_ovgrdA(grid_process_path, nest), par_name, forcing_path)
+        make_bry_need_grid(g.lon, g.lat, _ncom_vgrd(grid_process_path, nest), par_name, forcing_path)
     end
     if make_w
         println("create ", pariniw)
-        make_frc_need_wind(g.igrd, g.jgrd, ncread(g.ohgrd, "ang"), par_name, path_setup, forcing_path, mask)
+        make_frc_need_wind(g.igrd, g.jgrd, ncread(g.ohgrd, "ang"), par_name, path_setup, forcing_path, mask; nest)
     end
     if make_s
         println("create ", parinis)
-        make_frc_need_flux(g.igrd, g.jgrd, par_name, path_setup, forcing_path, mask)
+        make_frc_need_flux(g.igrd, g.jgrd, par_name, path_setup, forcing_path, mask; nest)
     end
     if make_p
         println("create ", parinip)
-        make_frc_need_pres(g.igrd, g.jgrd, par_name, path_setup, forcing_path, mask)
+        make_frc_need_pres(g.igrd, g.jgrd, par_name, path_setup, forcing_path, mask; nest)
     end
 
     return par_grd, parinis, pariniw, parinip

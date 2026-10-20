@@ -8,7 +8,7 @@ datadir = "/home/mbui/ModelOutput/NCOM/HYCOM_data/"   # GOFS 3.5 HYCOM 1/25° gl
 child_grid = "/home/hsinyi/roms_data/grid/roms_grd_900m.nc"   # ROMS 900m grid — boundary line
 parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"    # NCOM 900m grid — boundary line + map extent
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # mooring locations in its global attributes
-figure_path = "/home/hsinyi/figure/HYCOM_data"
+figure_path = "/home/hsinyi/figure/20261016_hycomdata"
 mkpath(figure_path)
 colorbar_file = joinpath(figure_path, "colorbar_nc.nc")   # color range of every plot, read by time_capture_NCOM.jl
 

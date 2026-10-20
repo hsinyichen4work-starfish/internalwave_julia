@@ -22,7 +22,7 @@ include("compute_rx1.jl")     # compute_rx1
 include("tri_coef.jl")        # gnomonic, tri_locate, fix_outside_child, get_tri_coef, apply_tri_coef, fillmask
 include("hv_coef.jl")         # get_hv_coef, apply_hv_coef
 include("inpaint_nans.jl")    # inpaint_nans, fillmissing_linear!
-include("ncom_flatfile.jl")   # read_ncom_flatfile, extract_ncom_name, read_ohgrd, read_ovgrdA, avg_face_to_center, vel_rot
+include("ncom_flatfile.jl")   # read_ncom_flatfile, extract_ncom_name, read_ohgrd(_nc), read_ovgrdA, ovgrd_from_ohgrd_nc, avg_face_to_center, vel_rot
 include("ncom2nc.jl")         # make_bry_need_nc, make_frc_need_nc and the per-file converters
 include("easy_grid.jl")       # easy_grid, rot_sphere, tra_sphere, gc_dist, make_grid
 include("grid_tools.jl")      # gid_middle, grid_setting, bathy_interp, lsmooth_fun, make_roms_ncgrid, match_boundary_topo
@@ -37,6 +37,7 @@ export compute_rx1, zlevs3
 export gnomonic, tri_locate, fix_outside_child, get_tri_coef, apply_tri_coef, fillmask
 export get_hv_coef, apply_hv_coef, inpaint_nans, fillmissing_linear!
 export extract_ncom_name, read_ncom_flatfile, ncom_file_list, read_ohgrd, read_ovgrdA, avg_face_to_center, vel_rot
+export read_ohgrd_nc, ovgrd_from_ohgrd_nc
 export make_bry_need_nc, make_bry_need_grid, make_bry_need_ssh, make_bry_need_temp, make_bry_need_vel
 export make_frc_need_nc, make_frc_need_wind, make_frc_need_flux, make_frc_need_pres
 export easy_grid, rot_sphere, tra_sphere, gc_dist, make_grid

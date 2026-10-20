@@ -13,9 +13,9 @@ datadir = "/home/hsinyi/roms_data/NCOM_DATA_NC/"        # NCOM daily files: <yyy
 child_grid = "/home/hsinyi/roms_data/grid/roms_grd_900m.nc"   # ROMS 900m grid — boundary line
 parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"    # NCOM 900m grid — data grid, boundary line + map extent
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # mooring locations in its global attributes
-figure_path = "/home/hsinyi/figure/HYCOM_data/NCOM"   # same file names as the HYCOM figures one folder up
+figure_path = "/home/hsinyi/figure/20261016_hycomdata/NCOM"   # same file names as the HYCOM figures one folder up
 mkpath(figure_path)
-colorbar_file = "/home/hsinyi/figure/HYCOM_data/colorbar_nc.nc"   # HYCOM color ranges, written by HYCOM_data.jl
+colorbar_file = "/home/hsinyi/figure/20261016_hycomdata/colorbar_nc.nc"   # HYCOM color ranges, written by HYCOM_data.jl
 
 ## settings
 plot_depths = [0, 100, 200, 250]   # depths (m) to plot temp/salt/speed at, same as HYCOM_data.jl
