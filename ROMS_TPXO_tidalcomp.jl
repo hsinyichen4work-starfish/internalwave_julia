@@ -31,8 +31,8 @@ Output in dirout: ROMS_TPXO_rms.txt, ROMS_TPXO_maps.png, ROMS_TPXO_rms.png, ROMS
   with lon/lat lines and the 200 m isobath)
 
 Run (batch: sbatch_files/julia_tidalcomp.sh):
-  TEST=true julia -t 8 --project=. ROMS_TPXO_tidalcomp.jl   # first 30 days, M2 S2 N2 K1 O1
-  julia -t 8 --project=. ROMS_TPXO_tidalcomp.jl             # full record
+  TEST=true julia -t 8 ROMS_TPXO_tidalcomp.jl   # first 30 days, M2 S2 N2 K1 O1
+  julia -t 8 ROMS_TPXO_tidalcomp.jl             # full record
 =#
 
 using NCDatasets, CairoMakie, Printf, Statistics, LinearAlgebra, Dates
@@ -302,18 +302,50 @@ for c in MAPC
 end
 tab = String(take!(io)); print(tab); write(dirout * "ROMS_TPXO_rms$(SUF).txt", tab)
 
-## --- figures, in model coordinates (km along xi / eta)
+## --- figures, on a regular lon/lat grid (x east, y north): fields bilinearly interpolated from the rotated
+##     ROMS grid; the (xi, eta) of each map point come from Newton iterations on the grid's lon/lat
 cm_to_pt = 72 / 2.54
-xk = dxkm .* (0:NX-1); yk = dykm .* (0:NY-1)
+const DLL = 0.01                                                        # deg, map grid spacing (~1.1 km)
+lonv = (floor(minimum(lonR) / DLL) * DLL):DLL:(ceil(maximum(lonR) / DLL) * DLL)
+latv = (floor(minimum(latR) / DLL) * DLL):DLL:(ceil(maximum(latR) / DLL) * DLL)
+function bil(X, fi, fj)
+    i0 = clamp(floor(Int, fi), 1, NX - 1); j0 = clamp(floor(Int, fj), 1, NY - 1); wx = fi - i0; wy = fj - j0
+    return (1 - wx) * (1 - wy) * X[i0, j0] + wx * (1 - wy) * X[i0 + 1, j0] + (1 - wx) * wy * X[i0, j0 + 1] + wx * wy * X[i0 + 1, j0 + 1]
+end
+FI, FJ = let
+    X = hcat(ones(NX * NY), vec(repeat(1:NX, 1, NY)), vec(repeat((1:NY)', NX, 1)))
+    cl = X \ vec(lonR); ct = X \ vec(latR)                              # affine first guess
+    Jinv = inv([cl[2] cl[3]; ct[2] ct[3]])
+    FI = zeros(length(lonv), length(latv)); FJ = similar(FI)
+    Threads.@threads for jl in eachindex(latv)
+        for il in eachindex(lonv)
+            fi, fj = Jinv * [lonv[il] - cl[1], latv[jl] - ct[1]]
+            for _ in 1:4
+                fi = clamp(fi, 1, NX); fj = clamp(fj, 1, NY)
+                i0 = clamp(floor(Int, fi), 1, NX - 1); j0 = clamp(floor(Int, fj), 1, NY - 1)
+                Jl = [lonR[i0+1, j0]-lonR[i0, j0] lonR[i0, j0+1]-lonR[i0, j0]; latR[i0+1, j0]-latR[i0, j0] latR[i0, j0+1]-latR[i0, j0]]
+                d = Jl \ [lonv[il] - bil(lonR, fi, fj), latv[jl] - bil(latR, fi, fj)]
+                fi += d[1]; fj += d[2]
+            end
+            FI[il, jl] = fi; FJ[il, jl] = fj
+        end
+    end
+    FI, FJ
+end
+inside = (1 .<= FI .<= NX) .& (1 .<= FJ .<= NY)
+rg(X) = [inside[p] ? bil(X, FI[p], FJ[p]) : NaN for p in CartesianIndices(FI)]   # ROMS field -> map grid
 xi = nsx+1:NX-nsx; yi = nsy+1:NY-nsy
-bx = xk[[xi[1], xi[end], xi[end], xi[1], xi[1]]]; by = yk[[yi[1], yi[1], yi[end], yi[end], yi[1]]]
+edge(i, j) = (vcat(lonR[i, j[1]], lonR[i[end], j], lonR[reverse(i), j[end]], lonR[i[1], reverse(j)]),
+              vcat(latR[i, j[1]], latR[i[end], j], latR[reverse(i), j[end]], latR[i[1], reverse(j)]))
+hmap = rg(hR)
+lonfmt(vs) = [@sprintf("%.0f°W", 360 - v) for v in vs]
+latfmt(vs) = [v < 0 ? @sprintf("%.0f°S", -v) : (v == 0 ? "0°" : @sprintf("%.0f°N", v)) for v in vs]
+mapax = (; aspect = DataAspect(), xtickformat = lonfmt, ytickformat = latfmt, xticks = 310:2:320, yticks = -2:2:8)
 function deco!(a; box = true)
-    contour!(a, xk, yk, lonR; levels = floor(minimum(lonR)):1:ceil(maximum(lonR)), color = (:gray30, 0.5), linewidth = 0.4,
-             labels = true, labelsize = 6, labelcolor = :gray30, labelformatter = l -> string.(round.(Int, 360 .- l), "°W"))
-    contour!(a, xk, yk, latR; levels = floor(minimum(latR)):1:ceil(maximum(latR)), color = (:gray30, 0.5), linewidth = 0.4,
-             labels = true, labelsize = 6, labelcolor = :gray30, labelformatter = l -> string.(round.(Int, l), "°N"))
-    contour!(a, xk, yk, hR; levels = [HSHELF], color = :black, linewidth = 0.7)
-    box && lines!(a, bx, by; color = :gray40, linewidth = 0.8, linestyle = :dot)
+    contour!(a, lonv, latv, hmap; levels = [HSHELF], color = :black, linewidth = 0.7)
+    lines!(a, edge(1:NX, 1:NY)...; color = :gray30, linewidth = 0.6)
+    box && lines!(a, edge(xi, yi)...; color = :gray40, linewidth = 0.8, linestyle = :dot)
+    limits!(a, first(lonv), last(lonv), first(latv), last(latv))
 end
 nanout(X) = ifelse.(WET, X, NaN)
 q(X, p) = quantile(filter(isfinite, vec(X[M])), p)
@@ -322,29 +354,29 @@ mapsuf = "ROMS Amazon 900 m ($tlab) vs TPXO10 v2a (1/6°)"
 
 ## figure 1: ROMS barotropic amplitude + co-phase lines, amplitude and phase differences
 mc = [c for c in MAPC if haskey(LP, c)]
-fig = Figure(size = (24cm_to_pt, (2 + 8.6length(mc))cm_to_pt), fontsize = 9)
+fig = Figure(size = (24cm_to_pt, (2 + 7.2length(mc))cm_to_pt), fontsize = 9)
 for (row, c) in enumerate(mc)
     zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
     Ar = abs.(zr); Gr = unw(zr); Gt = unw(zt)
     dA = nanout(Ar .- abs.(zt)); dG = nanout(-rad2deg.(angle.(zr .* conj.(zt))))
     dAm = max(q(abs.(dA), 0.99), 0.05); dGm = max(q(abs.(dG), 0.99), 1.0)
     lev = (floor(minimum(Gr) / 10) * 10):10:(ceil(maximum(Gr) / 10) * 10)
-    kw = (; xlabelvisible = row == length(mc), xticklabelsvisible = row == length(mc), aspect = DataAspect())
-    a1 = Axis(fig[row, 1]; title = "$c amplitude (ROMS bt) [cm], phase every 10°", ylabel = "y [km]", xlabel = "x [km]", kw...)
-    h1 = heatmap!(a1, xk, yk, nanout(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.995)))
-    contour!(a1, xk, yk, Gr; levels = lev, color = :black, linewidth = 0.7)
-    contour!(a1, xk, yk, nanout(Gt); levels = lev, color = :darkorange, linewidth = 0.7, linestyle = :dash)
+    kw = (; xlabelvisible = row == length(mc), xticklabelsvisible = row == length(mc), mapax...)
+    a1 = Axis(fig[row, 1]; title = "$c amplitude (ROMS bt) [cm], phase every 10°", ylabel = "latitude", xlabel = "longitude", kw...)
+    h1 = heatmap!(a1, lonv, latv, rg(nanout(Ar)); colormap = :Blues, colorrange = (0, q(Ar, 0.995)))
+    contour!(a1, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.7)
+    contour!(a1, lonv, latv, rg(nanout(Gt)); levels = lev, color = :darkorange, linewidth = 0.7, linestyle = :dash)
     Colorbar(fig[row, 2], h1; height = Relative(0.8))
-    a2 = Axis(fig[row, 3]; title = "$c amplitude ROMS - TPXO10 [cm]", xlabel = "x [km]", yticklabelsvisible = false, kw...)
-    h2 = heatmap!(a2, xk, yk, dA; colormap = :balance, colorrange = (-dAm, dAm))
+    a2 = Axis(fig[row, 3]; title = "$c amplitude ROMS - TPXO10 [cm]", xlabel = "longitude", yticklabelsvisible = false, kw...)
+    h2 = heatmap!(a2, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dAm, dAm))
     Colorbar(fig[row, 4], h2; height = Relative(0.8))
-    a3 = Axis(fig[row, 5]; title = "$c phase ROMS - TPXO10 [deg]", xlabel = "x [km]", yticklabelsvisible = false, kw...)
-    h3 = heatmap!(a3, xk, yk, dG; colormap = :balance, colorrange = (-dGm, dGm))
+    a3 = Axis(fig[row, 5]; title = "$c phase ROMS - TPXO10 [deg]", xlabel = "longitude", yticklabelsvisible = false, kw...)
+    h3 = heatmap!(a3, lonv, latv, rg(dG); colormap = :balance, colorrange = (-dGm, dGm))
     Colorbar(fig[row, 6], h3; height = Relative(0.8))
     foreach(deco!, (a1, a2, a3))
 end
-Label(fig[0, 1:6], "$mapsuf; ROMS barotropic = TPXO10 + low-pass(ROMS - TPXO10), half power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
-      "Left: co-phase lines ROMS black, TPXO10 orange dashed; thick black: $(Int(HSHELF)) m isobath; dotted box: comparison area; grey: lon/lat.", fontsize = 9, tellwidth = false)
+Label(fig[0, 1:6], "$mapsuf\nROMS barotropic = TPXO10 + low-pass(ROMS - TPXO10), half power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
+      "Left: co-phase lines ROMS black, TPXO10 orange dashed; thick black: $(Int(HSHELF)) m isobath; dotted box: comparison area; grey: model domain.", fontsize = 9, tellwidth = false)
 colgap!(fig.layout, 6); rowgap!(fig.layout, 4)
 save(dirout * "ROMS_TPXO_maps$(SUF).png", fig; px_per_unit = 300 / 72)
 
@@ -373,8 +405,8 @@ save(dirout * "ROMS_TPXO_rms$(SUF).png", fig2; px_per_unit = 300 / 72)
 ## figure 3: ROMS coherent M2 internal-tide SSH (full - barotropic)
 zit = ZR[:, :, kc("M2")] .- LP["M2"]
 fig3 = Figure(size = (13cm_to_pt, 14cm_to_pt), fontsize = 10)
-a = Axis(fig3[1, 1]; title = "ROMS coherent M2 internal-tide SSH amplitude [cm]\n(full - barotropic, $(Int(LC_SD)) km cutoff), $tlab", xlabel = "x [km]", ylabel = "y [km]", aspect = DataAspect())
-h = heatmap!(a, xk, yk, nanout(abs.(zit)); colormap = :Blues, colorrange = (0, q(abs.(zit), 0.995)))
+a = Axis(fig3[1, 1]; title = "ROMS coherent M2 internal-tide SSH amplitude [cm]\n(full - barotropic, $(Int(LC_SD)) km cutoff), $tlab", xlabel = "longitude", ylabel = "latitude", mapax...)
+h = heatmap!(a, lonv, latv, rg(nanout(abs.(zit))); colormap = :Blues, colorrange = (0, q(abs.(zit), 0.995)))
 deco!(a)
 Colorbar(fig3[1, 2], h)
 save(dirout * "ROMS_M2_ITssh$(SUF).png", fig3; px_per_unit = 300 / 72)
@@ -386,9 +418,9 @@ for (n, c) in enumerate(mc)
     E = nanout(abs.(LP[c] .- TP[c]) ./ sqrt(2))
     row, col = fldmod1(n, 2)
     a4 = Axis(fig4[row, 2col - 1]; title = @sprintf("%s: area rms %.2f cm (%.0f%% of signal rms)", c, r[:rms], 100 * r[:rms] / r[:S]),
-              xlabel = "x [km]", ylabel = "y [km]", aspect = DataAspect(), xlabelvisible = row == 2, xticklabelsvisible = row == 2,
+              xlabel = "longitude", ylabel = "latitude", mapax..., xlabelvisible = row == 2, xticklabelsvisible = row == 2,
               ylabelvisible = col == 1, yticklabelsvisible = col == 1)
-    h4 = heatmap!(a4, xk, yk, E; colormap = :Oranges, colorrange = (0, q(E, 0.995)))
+    h4 = heatmap!(a4, lonv, latv, rg(E); colormap = :Oranges, colorrange = (0, q(E, 0.995)))
     deco!(a4)
     Colorbar(fig4[row, 2col], h4; label = "rms difference [cm]", height = Relative(0.8))
 end
@@ -407,12 +439,12 @@ for (n, c) in enumerate(mc)
     dl = first(d for d in (1, 2, 5, 10, 15, 30) if rng / d <= 12)
     lev = (floor(minimum(Gr) / dl) * dl):dl:(ceil(maximum(Gr) / dl) * dl)
     row, col = fldmod1(n, 2)
-    a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm], Greenwich phase every $(dl)°", xlabel = "x [km]", ylabel = "y [km]",
-              aspect = DataAspect(), xlabelvisible = row == 2, xticklabelsvisible = row == 2, ylabelvisible = col == 1, yticklabelsvisible = col == 1)
-    h5 = heatmap!(a5, xk, yk, Ar; colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
+    a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm], Greenwich phase every $(dl)°", xlabel = "longitude", ylabel = "latitude",
+              mapax..., xlabelvisible = row == 2, xticklabelsvisible = row == 2, ylabelvisible = col == 1, yticklabelsvisible = col == 1)
+    h5 = heatmap!(a5, lonv, latv, rg(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
     deco!(a5; box = false)
-    contour!(a5, xk, yk, Gt; levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
-    contour!(a5, xk, yk, Gr; levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 8,
+    contour!(a5, lonv, latv, rg(Gt); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
+    contour!(a5, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 8,
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
     Colorbar(fig5[row, 2col], h5; label = "amplitude [cm]", height = Relative(0.8))
 end

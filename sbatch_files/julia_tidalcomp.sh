@@ -16,4 +16,4 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia -t 8 --project=. ROMS_TPXO_tidalcomp.jl 2>&1 | tee log_files/tidalcomp_${TEST:+test_}${SLURM_JOB_ID}.log
+julia -t 8 ROMS_TPXO_tidalcomp.jl 2>&1 | tee log_files/tidalcomp_${TEST:+test_}${SLURM_JOB_ID}.log
