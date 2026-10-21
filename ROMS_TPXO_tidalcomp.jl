@@ -10,11 +10,20 @@ Step 1 (harmonic fit, cached): hourly zeta from roms_his.*.nc, 2022-08-24 .. 202
   - model: mean + linear trend + FIT constituents; f(t), u(t), V(t) every hour (pyTMD, OTIS/TPXO
     conventions, latitude independent, via function/nodal_args.py) -> nodal-free A, G
   - ~95 days do not separate K2 from S2, P1 from K1, NU2 from N2 (Rayleigh 182-206 d): these are
-    inferred, Z_K2 = R Z_S2 etc., with R the TPXO10 complex ratio (area mean over the interior),
+    inferred, Z_K2 = R Z_S2 etc., with R the TPXO complex ratio (area mean over the interior),
     and are part of the S2/K1/N2 basis functions (t_tide-like inference)
   - convention (TPXO): eta = f A cos(V + u - G), Z = A exp(-iG) = hRe + i hIm
-  Output: dirout/ROMS_<RUN>_harmconst[_test].nc. Delete it, or REFIT=true, to fit again.
-Step 2 (comparison with TPXO10 v2a, 1/6 deg OTIS binary, the only atlas available here):
+  Output: dirout/ROMS_<RUN>_harmconst_<ATLAS>[_test].nc (R depends on the atlas, so one fit per
+  atlas). Delete it, or REFIT=true, to fit again.
+Step 2 (comparison with TPXO; ATLAS = tpxo10 (default), tpxo9 or tpxo6):
+  - tpxo10 / tpxo9: TPXO10-atlas v2 / TPXO9-atlas v2, 1/30 deg netCDF (h_<con>_*_atlas_30_v2.nc,
+    hRe/hIm int mm on z nodes). Constituents the atlas lacks (L2, J1, OO1, NU2) come from TPXO10 v2a
+    1/6 deg (OTIS binary) and are compared over the 1/6 deg-wet points only (src 1/6 in the table);
+    an inference ratio with a 1/6 deg constituent takes both from 1/6 deg.
+    tpxo6: everything from TPXO10 v2a 1/6 deg (the previous setup).
+  - SMOOTH (default false; true = sigma 20 km) or TSIG (km, overrides): Gaussian smoothing of the small 1/30 deg constituents, which the atlas
+    stores in whole mm (terraced phase); outputs then carry _s<TSIG>
+  - the other 1/30 deg atlas gives an atlas-to-atlas RMS (TPXO9 vs TPXO10) as a reference floor
   - TPXO bilinearly interpolated to the rho points (lon_rho is already 0-360); points next to a
     TPXO land cell (z = 0) are masked (Amazon mouth, coast)
   - ROMS barotropic Z_bt = Z_TPXO + LP(Z_ROMS - Z_TPXO); LP a 2-D Gaussian (normalised convolution
@@ -26,13 +35,15 @@ Step 2 (comparison with TPXO10 v2a, 1/6 deg OTIS binary, the only atlas availabl
   - comparison area: SPONGE km removed along each open boundary, TPXO-wet points; cell-area weights
   - per constituent: RMS = sqrt(< |Z1 - Z2|^2 / 2 >), signal rms S, amplitude ratio, amplitude-
     weighted phase difference (+ = ROMS lags); RMS split into shelf (h < HSHELF) and deep water
-Output in dirout: ROMS_TPXO_rms.txt, ROMS_TPXO_maps.png, ROMS_TPXO_rms.png, ROMS_M2_ITssh.png,
-  ROMS_TPXO_rms_maps.png, ROMS_TPXO_cotidal.png (maps in model coordinates, km along xi / eta,
+Output in dirout, all with suffix _<ATLAS>[_test]: ROMS_TPXO_rms.txt, ROMS_TPXO_maps.png, ROMS_TPXO_rms.png,
+  ROMS_M2_ITssh.png, ROMS_TPXO_rms_maps.png, ROMS_TPXO_cotidal.png (maps in model coordinates, km along xi / eta,
   with lon/lat lines and the 200 m isobath)
 
 Run (batch: sbatch_files/julia_tidalcomp.sh):
   TEST=true julia -t 8 ROMS_TPXO_tidalcomp.jl   # first 30 days, M2 S2 N2 K1 O1
   julia -t 8 ROMS_TPXO_tidalcomp.jl             # full record
+  ATLAS=tpxo6 julia -t 8 ROMS_TPXO_tidalcomp.jl # TPXO10 v2a 1/6 deg only
+  SMOOTH=true julia -t 8 ROMS_TPXO_tidalcomp.jl # 1/30 deg atlas smoothed, sigma 20 km (outputs _s20)
 =#
 
 using NCDatasets, CairoMakie, Printf, Statistics, LinearAlgebra, Dates
@@ -40,6 +51,8 @@ using NCDatasets, CairoMakie, Printf, Statistics, LinearAlgebra, Dates
 const dirR   = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint/"
 const fgrd   = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
 const fT6    = "/expanse/lustre/projects/uso101/hchen54/data_upload/h_tpxo10.v2a"
+const dirT30 = Dict("tpxo10" => "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO10a_v2/1_30deg/TPXO10_atlas_v2_nc/",
+                    "tpxo9"  => "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO9_atlas_nc-selected/")
 const dirout = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/tidal_comp/"
 const PY     = "/home/hchen54/.venvs/utide/bin/python"
 const NODPY  = "/home/hchen54/internalwave_julia/function/nodal_args.py"
@@ -47,6 +60,16 @@ const RUN    = "amazon900m"
 const TEST   = get(ENV, "TEST", "false") == "true"
 const REFIT  = get(ENV, "REFIT", "false") == "true"
 const SUF    = TEST ? "_test" : ""
+const ATLAS  = lowercase(get(ENV, "ATLAS", "tpxo10"))
+ATLAS in ("tpxo10", "tpxo9", "tpxo6") || error("ATLAS = tpxo10, tpxo9 or tpxo6")
+const SMOOTH = get(ENV, "SMOOTH", "false") == "true"                  # switch: true = smooth the 1/30 deg atlas with sigma 20 km
+const TSIG   = ATLAS == "tpxo6" ? 0.0 : parse(Float64, get(ENV, "TSIG", SMOOTH ? "20" : "0"))   # km, Gaussian sigma (0: off)
+const TSMA   = 10.0                                                    # cm, smooth only constituents with mean |Z| below this
+const SMOOTHED = Set{String}()
+const OSUF   = "_$(ATLAS)$(SUF)"
+const FSUF   = OSUF * (TSIG > 0 ? "_s$(round(Int, TSIG))" : "")       # outputs of step 2
+const TPN    = ATLAS == "tpxo9" ? "TPXO9" : "TPXO10"            # name in labels
+const TPLAB  = Dict("tpxo10" => "TPXO10-atlas v2 (1/30°)", "tpxo9" => "TPXO9-atlas v2 (1/30°)", "tpxo6" => "TPXO10 v2a (1/6°)")[ATLAS]
 const TREF   = DateTime(1994, 1, 1)          # ocean_time reference ("Time since 1994/01/01")
 const SPINUP = 3.0                           # days dropped at the start of the run
 const FIT    = TEST ? ["m2", "s2", "n2", "k1", "o1"] :
@@ -59,7 +82,7 @@ const HSHELF = 200.0                         # m, shelf / deep-water split
 const MAJOR  = ["M2", "S2", "N2", "K2", "K1", "O1", "P1", "Q1"]
 const DIURNAL = ["K1", "O1", "P1", "Q1", "J1", "OO1"]
 const MAPC   = ["M2", "S2", "K1", "O1"]
-const fhc    = dirout * "ROMS_$(RUN)_harmconst$(SUF).nc"
+const fhc    = dirout * "ROMS_$(RUN)_harmconst$(OSUF).nc"
 mkpath(dirout)
 
 ## --- grid (Julia order: xi, eta)
@@ -97,25 +120,104 @@ function otis_h(f, cons)
     end
     return out, wet
 end
+
+## --- separable Gaussian convolution (sigma s in grid cells, truncated at 4 sigma), used for the
+##     atlas smoothing and the low-pass of step 2
+function conv1!(out, y, k, hw)
+    n = length(y)
+    @inbounds for i in 1:n
+        acc = zero(eltype(y))
+        for j in max(1, i - hw):min(n, i + hw)
+            acc += k[j - i + hw + 1] * y[j]
+        end
+        out[i] = acc
+    end
+end
+function conv2(X, s)
+    hw = ceil(Int, 4s); k = exp.(-0.5 .* ((-hw:hw) ./ s) .^ 2)
+    T = similar(X); Y = similar(X)
+    Threads.@threads for j in axes(X, 2); conv1!(view(T, :, j), X[:, j], k, hw); end
+    Threads.@threads for i in axes(X, 1); conv1!(view(Y, i, :), T[i, :], k, hw); end
+    return Y
+end
+
+## --- TPXO 1/30 deg atlas, netCDF h_<con>_<ver>_atlas_30_v2.nc: hRe, hIm (nx, ny) int [mm] on z nodes,
+##     uniform lon 0-360 / lat -90..90 (Julia order ny, nx); only the window around the ROMS grid is read. Same bilinear
+##     interpolation [cm] and wet test as otis_h.
+##     TSIG > 0: the atlas stores whole mm, so small constituents are terraced (K1/O1: ~0.75 deg phase
+##     steps, 10-30 distinct values over the deep basin). Constituents with window-mean |Z| < TSMA are
+##     smoothed on the atlas grid with a Gaussian of sigma TSIG km (normalised convolution over ocean
+##     nodes) before the interpolation.
+function atlas_h(dir, ver, cons)
+    out = Dict{String, Matrix{ComplexF64}}(); wet = trues(NX, NY)
+    fn(c) = dir * "h_$(lowercase(c))_$(ver)_atlas_30_v2.nc"
+    lonz, latz = NCDataset(fn("m2")) do ds; ds["lon_z"][:], ds["lat_z"][:]; end
+    sc = TSIG / (111.19 * (latz[2] - latz[1]))                         # sigma in atlas cells
+    mg = 1 + ceil(Int, 4sc)                                             # margin so the kernel sees real data
+    ia = searchsortedlast(lonz, minimum(lonR)) - mg; ib = searchsortedfirst(lonz, maximum(lonR)) + mg
+    ja = searchsortedlast(latz, minimum(latR)) - mg; jb = searchsortedfirst(latz, maximum(latR)) + mg
+    dl = (lonz[ib] - lonz[ia]) / (ib - ia); dt = (latz[jb] - latz[ja]) / (jb - ja)
+    fx = (lonR .- lonz[ia]) ./ dl .+ 1; fy = (latR .- latz[ja]) ./ dt .+ 1
+    i0 = floor.(Int, fx); j0 = floor.(Int, fy); wx = fx .- i0; wy = fy .- j0
+    for c in cons
+        isfile(fn(c)) || continue
+        z = NCDataset(fn(c)) do ds
+            rd(v) = 0.1 .* permutedims(Float64.(ds[v].var[ja:jb, ia:ib]))     # stored (ny, nx) in Julia order
+            complex.(rd("hRe"), rd("hIm"))
+        end
+        if TSIG > 0 && mean(abs, z) < TSMA
+            wz = Float64.(.!iszero.(z))
+            z = ifelse.(wz .> 0, conv2(wz .* z, sc) ./ conv2(wz, sc), 0.0im)
+            push!(SMOOTHED, uppercase(c))
+        end
+        out[uppercase(c)] = [(1 - wx[p]) * (1 - wy[p]) * z[i0[p], j0[p]] + wx[p] * (1 - wy[p]) * z[i0[p] + 1, j0[p]] +
+                             (1 - wx[p]) * wy[p] * z[i0[p], j0[p] + 1] + wx[p] * wy[p] * z[i0[p] + 1, j0[p] + 1] for p in CartesianIndices(lonR)]
+        if lowercase(c) == "m2"
+            wet .= [all(!iszero, (z[i0[p], j0[p]], z[i0[p] + 1, j0[p]], z[i0[p], j0[p] + 1], z[i0[p] + 1, j0[p] + 1])) for p in CartesianIndices(lonR)]
+        end
+    end
+    return out, wet
+end
+
 ALLC = vcat(FIT, first.(INFER))
-TP, WET = otis_h(fT6, ALLC)
-@printf("TPXO10 v2a: %s; %.2f%% of the rho points next to TPXO land (masked)\n", join(sort(collect(keys(TP))), " "), 100 * (1 - mean(WET)))
+TP6, WET6 = otis_h(fT6, ALLC)
+@printf("TPXO10 v2a 1/6 deg: %s; %.2f%% of the rho points next to land\n", join(sort(collect(keys(TP6))), " "), 100 * (1 - mean(WET6)))
+if ATLAS == "tpxo6"
+    TP, WET = TP6, WET6
+    SRC = Dict(c => "1/6" for c in keys(TP))
+else
+    TPa, WET = atlas_h(dirT30[ATLAS], ATLAS, ALLC)
+    SRC = merge(Dict(c => "1/6" for c in keys(TP6)), Dict(c => "1/30" for c in keys(TPa)))
+    TP = merge(TP6, TPa)
+    @printf("%s: %s; %.2f%% of the rho points next to land; from 1/6 deg: %s\n", TPLAB, join(sort(collect(keys(TPa))), " "),
+            100 * (1 - mean(WET)), join(sort([c for (c, v) in SRC if v == "1/6"]), " "))
+    ## the other 1/30 deg atlas, for the atlas-to-atlas RMS
+    TSIG > 0 && @printf("1/30 deg atlas smoothed, Gaussian sigma %.0f km: %s\n", TSIG, join(sort(collect(SMOOTHED)), " "))
+    AX = ATLAS == "tpxo10" ? "tpxo9" : "tpxo10"
+    TPX, WETX = atlas_h(dirT30[AX], AX, ALLC)
+end
 
 ## --- comparison area and weights
 nsx = round(Int, SPONGE / dxkm); nsy = round(Int, SPONGE / dykm)
 M = falses(NX, NY); M[nsx+1:NX-nsx, nsy+1:NY-nsy] .= true; M .&= WET
-W = M ./ (pm .* pn)
+M6 = M .& WET6                                                          # for constituents from 1/6 deg
+W = M ./ (pm .* pn); W6 = M6 ./ (pm .* pn)
 wmean(X, w = W) = sum(w .* X) / sum(w)
 rmsd(Z1, Z2, w = W) = sqrt(wmean(abs2.(Z1 .- Z2) ./ 2, w))
 srms(Z, w = W) = sqrt(wmean(abs2.(Z) ./ 2, w))
-aratio(Z1, Z2) = wmean(abs.(Z1)) / wmean(abs.(Z2))
-dphase(Z1, Z2) = -rad2deg(angle(sum(W .* Z1 .* conj.(Z2))))             # + = Z1 lags Z2
-Wsh = W .* (hR .< HSHELF); Wdp = W .* (hR .>= HSHELF)
+aratio(Z1, Z2, w = W) = wmean(abs.(Z1), w) / wmean(abs.(Z2), w)
+dphase(Z1, Z2, w = W) = -rad2deg(angle(sum(w .* Z1 .* conj.(Z2))))     # + = Z1 lags Z2
+shelf = hR .< HSHELF
+ATLAS == "tpxo6" || @printf("comparison area: %d points (%d at 1/6 deg); shelf %d (%d at 1/6 deg)\n", count(M), count(M6), count(M .& shelf), count(M6 .& shelf))
 
-## --- inference ratios from TPXO (complex, area mean over the comparison area)
-RINF = Dict(ci => sum(W .* TP[uppercase(ci)] .* conj.(TP[uppercase(cb)])) / sum(W .* abs2.(TP[uppercase(cb)])) for (ci, cb) in INFER)
+## --- inference ratios from TPXO (complex, area mean over the comparison area); both from 1/6 deg if either is
+RINF = Dict{String, ComplexF64}()
 for (ci, cb) in INFER
-    @printf("inference %s = R %s: |R| %.4f, arg %.2f deg (TPXO10)\n", uppercase(ci), uppercase(cb), abs(RINF[ci]), rad2deg(angle(RINF[ci])))
+    C1, C2 = uppercase(ci), uppercase(cb)
+    six = SRC[C1] == "1/6" || SRC[C2] == "1/6"
+    T, w = six ? (TP6, W6) : (TP, W)
+    RINF[ci] = sum(w .* T[C1] .* conj.(T[C2])) / sum(w .* abs2.(T[C2]))
+    @printf("inference %s = R %s: |R| %.4f, arg %.2f deg (%s)\n", C1, C2, abs(RINF[ci]), rad2deg(angle(RINF[ci])), six ? "TPXO10 v2a 1/6 deg" : TPLAB)
 end
 
 ## --- step 1: harmonic fit
@@ -196,7 +298,7 @@ function run_fit()
         ds.attrib["title"] = "Harmonic constants of hourly SSH, ROMS Amazon 900 m, $(Date(tdate(tsec[1]))) to $(Date(tdate(tsec[end])))"
         ds.attrib["convention"] = "eta = f A cos(V + u - G); Z = A exp(-iG) (TPXO hRe + i hIm); G = Greenwich phase lag [deg], V, f, u from pyTMD (OTIS)"
         ds.attrib["model"] = "mean + linear trend + constituents, ordinary least squares, f(t), u(t), V(t) hourly"
-        ds.attrib["inferred"] = join(["$(uppercase(ci)) = R $(uppercase(cb)) (R from TPXO10 v2a)" for (ci, cb) in INFER], "; ")
+        ds.attrib["inferred"] = join(["$(uppercase(ci)) = R $(uppercase(cb)) (R from $(SRC[uppercase(ci)] == "1/6" || SRC[uppercase(cb)] == "1/6" ? "TPXO10 v2a 1/6 deg" : TPLAB))" for (ci, cb) in INFER], "; ")
         ds.attrib["records"] = nt; ds.attrib["t_start"] = string(tdate(tsec[1])); ds.attrib["t_end"] = string(tdate(tsec[end]))
         ds.attrib["script"] = "internalwave_julia/ROMS_TPXO_tidalcomp.jl"
         defVar(ds, "con", CON, ("con",))
@@ -232,31 +334,14 @@ end
 kc(c) = findfirst(==(c), CON)
 
 ## 2-D Gaussian low-pass by normalised convolution with weights Wf (the filter sees only the comparison
-## area; edges and masked points are renormalised): LP(Z) = G*(Wf Z) / G*(Wf). Separable, truncated at
-## 4 sigma; sigma = lc / 5.336 gives a response exp(-2 pi^2 sigma^2 / lambda^2) of 1/2 at lambda = lc
-function conv1!(out, y, k, hw)
-    n = length(y)
-    @inbounds for i in 1:n
-        acc = zero(eltype(y))
-        for j in max(1, i - hw):min(n, i + hw)
-            acc += k[j - i + hw + 1] * y[j]
-        end
-        out[i] = acc
-    end
-end
-function conv2(X, s)
-    hw = ceil(Int, 4s); k = exp.(-0.5 .* ((-hw:hw) ./ s) .^ 2)
-    T = similar(X); Y = similar(X)
-    Threads.@threads for j in axes(X, 2); conv1!(view(T, :, j), X[:, j], k, hw); end
-    Threads.@threads for i in axes(X, 1); conv1!(view(Y, i, :), T[i, :], k, hw); end
-    return Y
-end
-const Wf = Float64.(M)
-const WfLP = Dict{Float64, Matrix{Float64}}()
-function gfilt(Z, lc)
-    s = lc / 5.336 / dxkm
-    den = get!(() -> conv2(Wf, s), WfLP, lc)
-    return conv2(Wf .* Z, s) ./ den
+## area; edges and masked points are renormalised): LP(Z) = G*(Wf Z) / G*(Wf), conv2 defined above;
+## sigma = lc / 5.336 gives a response exp(-2 pi^2 sigma^2 / lambda^2) of 1/2 at lambda = lc
+const Wf = Float64.(M); const Wf6 = Float64.(M6)
+const WfLP = Dict{Tuple{Float64, Bool}, Matrix{Float64}}()
+function gfilt(Z, lc, six = false)
+    s = lc / 5.336 / dxkm; wf = six ? Wf6 : Wf
+    den = get!(() -> conv2(wf, s), WfLP, (lc, six))
+    return conv2(wf .* Z, s) ./ den
 end
 lcof(c) = c in DIURNAL ? LC_D : LC_SD
 
@@ -265,42 +350,48 @@ LP = Dict{String, Matrix{ComplexF64}}()
 for (k, c) in enumerate(CON)
     haskey(TP, c) || continue
     lc = lcof(c); t10 = TP[c]; zr = ZR[:, :, k]
-    zl = t10 .+ gfilt(zr .- t10, lc); LP[c] = zl                        # ROMS barotropic
-    push!(rows, Dict{Symbol, Any}(:con => c, :inf => INF[k], :A10 => wmean(abs.(t10)), :S => srms(t10),
-        :rms => rmsd(zl, t10), :ar => aratio(zl, t10), :dg => dphase(zl, t10),
-        :rms_sh => rmsd(zl, t10, Wsh), :S_sh => srms(t10, Wsh), :rms_dp => rmsd(zl, t10, Wdp), :S_dp => srms(t10, Wdp),
-        :rms_full => rmsd(zr, t10),                                        # ROMS unfiltered
-        :rms_lpR => rmsd(gfilt(zr, lc), t10),                              # ROMS alone low-passed
-        :Tlp => rmsd(gfilt(t10, lc), t10),                                 # what the low-pass does to TPXO
-        :it => srms(zr .- zl),                                             # coherent IT SSH rms
-        :aerr => median(Aerr[:, :, k][M])))
+    six = SRC[c] == "1/6" && ATLAS != "tpxo6"                          # 1/6 deg fallback: 1/6 deg-wet points only
+    w = six ? W6 : W; wsh = w .* shelf; wdp = w .* .!shelf
+    zl = t10 .+ gfilt(zr .- t10, lc, six); LP[c] = zl                   # ROMS barotropic
+    tx = (ATLAS != "tpxo6" && SRC[c] == "1/30" && haskey(TPX, c)) ? rmsd(t10, TPX[c], w .* WETX) : NaN   # atlas-to-atlas
+    push!(rows, Dict{Symbol, Any}(:con => c, :inf => INF[k], :src => SRC[c], :A10 => wmean(abs.(t10), w), :S => srms(t10, w),
+        :rms => rmsd(zl, t10, w), :ar => aratio(zl, t10, w), :dg => dphase(zl, t10, w),
+        :rms_sh => rmsd(zl, t10, wsh), :S_sh => srms(t10, wsh), :rms_dp => rmsd(zl, t10, wdp), :S_dp => srms(t10, wdp),
+        :rms_full => rmsd(zr, t10, w),                                     # ROMS unfiltered
+        :rms_lpR => rmsd(gfilt(zr, lc, six), t10, w),                      # ROMS alone low-passed
+        :Tlp => rmsd(gfilt(t10, lc, six), t10, w),                         # what the low-pass does to TPXO
+        :tx => tx,
+        :it => srms(zr .- zl, w),                                          # coherent IT SSH rms
+        :aerr => median(Aerr[:, :, k][six ? M6 : M])))
 end
 
 io = IOBuffer()
-@printf(io, "ROMS Amazon 900 m (%s, hourly zeta) vs TPXO10 v2a 1/6 deg; comparison area: %.0f km sponge removed, TPXO-wet points\n", tlab, SPONGE)
-@printf(io, "ROMS_bt = TPXO10 + LP(ROMS - TPXO10), LP Gaussian half power at %.0f km (semidiurnal and higher) / %.0f km (diurnal)\n", LC_SD, LC_D)
-@printf(io, "RMS = sqrt(<|dZ|^2/2>) [cm]; S = TPXO10 signal rms; ratio = <A_ROMS>/<A_TPXO>; dG = ROMS - TPXO [deg], + = ROMS lags\n")
-@printf(io, "shelf: h < %.0f m, deep: h >= %.0f m; RMSfull: ROMS unfiltered; RMS_lpR: ROMS alone low-passed; Tlp-raw: rms change of TPXO10 by the low-pass;\n", HSHELF, HSHELF)
-@printf(io, "IT: rms of coherent internal-tide SSH (ROMS - ROMS_bt); A_err: median white-noise error of the ROMS amplitude; * inferred from TPXO ratio\n\n")
-@printf(io, "%-5s %7s %7s | %7s %6s %6s %7s | %7s %6s %7s %6s | %7s %7s %7s | %6s %6s\n", "con", "<A10>", "S", "RMS", "relRMS", "ratio", "dG",
-        "RMSshlf", "rel", "RMSdeep", "rel", "RMSfull", "RMS_lpR", "Tlp-raw", "IT", "A_err")
+@printf(io, "ROMS Amazon 900 m (%s, hourly zeta) vs %s; comparison area: %.0f km sponge removed, TPXO-wet points (%d)\n", tlab, TPLAB, SPONGE, count(M))
+@printf(io, "ROMS_bt = TPXO + LP(ROMS - TPXO), LP Gaussian half power at %.0f km (semidiurnal and higher) / %.0f km (diurnal)\n", LC_SD, LC_D)
+@printf(io, "RMS = sqrt(<|dZ|^2/2>) [cm]; S = TPXO signal rms; ratio = <A_ROMS>/<A_TPXO>; dG = ROMS - TPXO [deg], + = ROMS lags\n")
+@printf(io, "shelf: h < %.0f m, deep: h >= %.0f m; RMSfull: ROMS unfiltered; RMS_lpR: ROMS alone low-passed; Tlp-raw: rms change of TPXO by the low-pass;\n", HSHELF, HSHELF)
+@printf(io, "IT: rms of coherent internal-tide SSH (ROMS - ROMS_bt); A_err: median white-noise error of the ROMS amplitude; * inferred from TPXO ratio\n")
+TSIG > 0 && @printf(io, "1/30 deg atlas smoothed with a Gaussian of sigma %.0f km (both atlases): %s\n", TSIG, join(sort(collect(SMOOTHED)), " "))
+@printf(io, "src: TPXO resolution [deg] (1/6: compared over the %d 1/6 deg-wet points only); T9-T10: RMS TPXO9-atlas vs TPXO10-atlas (1/30 deg)\n\n", count(M6))
+@printf(io, "%-5s %4s %7s %7s | %7s %6s %6s %7s | %7s %6s %7s %6s | %7s %7s %7s %7s | %6s %6s\n", "con", "src", "<A10>", "S", "RMS", "relRMS", "ratio", "dG",
+        "RMSshlf", "rel", "RMSdeep", "rel", "RMSfull", "RMS_lpR", "Tlp-raw", "T9-T10", "IT", "A_err")
 for r in rows
-    @printf(io, "%-5s %7.3f %7.3f | %7.3f %5.1f%% %6.3f %+7.2f | %7.3f %5.1f%% %7.3f %5.1f%% | %7.3f %7.3f %7.3f | %6.2f %6.3f\n",
-            r[:con] * (r[:inf] ? "*" : ""), r[:A10], r[:S], r[:rms], 100 * r[:rms] / r[:S], r[:ar], r[:dg],
-            r[:rms_sh], 100 * r[:rms_sh] / r[:S_sh], r[:rms_dp], 100 * r[:rms_dp] / r[:S_dp], r[:rms_full], r[:rms_lpR], r[:Tlp], r[:it], r[:aerr])
+    @printf(io, "%-5s %4s %7.3f %7.3f | %7.3f %5.1f%% %6.3f %+7.2f | %7.3f %5.1f%% %7.3f %5.1f%% | %7.3f %7.3f %7.3f %7.3f | %6.2f %6.3f\n",
+            r[:con] * (r[:inf] ? "*" : ""), r[:src], r[:A10], r[:S], r[:rms], 100 * r[:rms] / r[:S], r[:ar], r[:dg],
+            r[:rms_sh], 100 * r[:rms_sh] / r[:S_sh], r[:rms_dp], 100 * r[:rms_dp] / r[:S_dp], r[:rms_full], r[:rms_lpR], r[:Tlp], r[:tx], r[:it], r[:aerr])
 end
 mj = [r for r in rows if r[:con] in MAJOR]
 rss(key) = sqrt(sum(r[key]^2 for r in mj))
 @printf(io, "\nRSS over %s: ROMS_bt %.3f (shelf %.3f, deep %.3f), ROMS unfiltered %.3f, ROMS alone low-passed %.3f cm\n",
         join([r[:con] for r in mj], " "), rss(:rms), rss(:rms_sh), rss(:rms_dp), rss(:rms_full), rss(:rms_lpR))
 @printf(io, "median residual std %.2f cm, median SSH std %.2f cm (comparison area)\n", median(resid[M]), median(sshstd[M]))
-@printf(io, "\nRMS [cm] of LP(ROMS - TPXO10) vs half-power cutoff [km] (the internal tide drops out as the cutoff grows):\n")
+@printf(io, "\nRMS [cm] of LP(ROMS - TPXO) vs half-power cutoff [km] (the internal tide drops out as the cutoff grows):\n")
 for c in MAPC
     k = kc(c); (k === nothing || !haskey(TP, c)) && continue
     D = ZR[:, :, k] .- TP[c]
     @printf(io, "  %-3s %s\n", c, join([@sprintf("%5.0f: %.3f", L, srms(gfilt(D, L))) for L in (200, 300, 400, 600, 800)], "  "))
 end
-tab = String(take!(io)); print(tab); write(dirout * "ROMS_TPXO_rms$(SUF).txt", tab)
+tab = String(take!(io)); print(tab); write(dirout * "ROMS_TPXO_rms$(FSUF).txt", tab)
 
 ## --- figures, on a regular lon/lat grid (x east, y north): fields bilinearly interpolated from the rotated
 ##     ROMS grid; the (xi, eta) of each map point come from Newton iterations on the grid's lon/lat
@@ -350,7 +441,7 @@ end
 nanout(X) = ifelse.(WET, X, NaN)
 q(X, p) = quantile(filter(isfinite, vec(X[M])), p)
 gm_unw(zr) = (gm = rad2deg(angle(sum(W .* zr))); z -> (G = -rad2deg.(angle.(z)); mod.(G .+ gm .+ 180, 360) .- 180 .- gm))   # phase unwrapped about the area mean
-mapsuf = "ROMS Amazon 900 m ($tlab) vs TPXO10 v2a (1/6°)"
+mapsuf = "ROMS Amazon 900 m ($tlab) vs $TPLAB" * (TSIG > 0 ? ", smoothed σ = $(round(Int, TSIG)) km (|Z| < $(round(Int, TSMA)) cm)" : "")
 
 ## figure 1: ROMS barotropic amplitude + co-phase lines, amplitude and phase differences
 mc = [c for c in MAPC if haskey(LP, c)]
@@ -367,18 +458,18 @@ for (row, c) in enumerate(mc)
     contour!(a1, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.7)
     contour!(a1, lonv, latv, rg(nanout(Gt)); levels = lev, color = :darkorange, linewidth = 0.7, linestyle = :dash)
     Colorbar(fig[row, 2], h1; height = Relative(0.8))
-    a2 = Axis(fig[row, 3]; title = "$c amplitude ROMS - TPXO10 [cm]", xlabel = "longitude", yticklabelsvisible = false, kw...)
+    a2 = Axis(fig[row, 3]; title = "$c amplitude ROMS - $(TPN) [cm]", xlabel = "longitude", yticklabelsvisible = false, kw...)
     h2 = heatmap!(a2, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dAm, dAm))
     Colorbar(fig[row, 4], h2; height = Relative(0.8))
-    a3 = Axis(fig[row, 5]; title = "$c phase ROMS - TPXO10 [deg]", xlabel = "longitude", yticklabelsvisible = false, kw...)
+    a3 = Axis(fig[row, 5]; title = "$c phase ROMS - $(TPN) [deg]", xlabel = "longitude", yticklabelsvisible = false, kw...)
     h3 = heatmap!(a3, lonv, latv, rg(dG); colormap = :balance, colorrange = (-dGm, dGm))
     Colorbar(fig[row, 6], h3; height = Relative(0.8))
     foreach(deco!, (a1, a2, a3))
 end
-Label(fig[0, 1:6], "$mapsuf\nROMS barotropic = TPXO10 + low-pass(ROMS - TPXO10), half power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
-      "Left: co-phase lines ROMS black, TPXO10 orange dashed; thick black: $(Int(HSHELF)) m isobath; dotted box: comparison area; grey: model domain.", fontsize = 9, tellwidth = false)
+Label(fig[0, 1:6], "$mapsuf\nROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)), half power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
+      "Left: co-phase lines ROMS black, $(TPN) orange dashed; thick black: $(Int(HSHELF)) m isobath; dotted box: comparison area; grey: model domain.", fontsize = 9, tellwidth = false)
 colgap!(fig.layout, 6); rowgap!(fig.layout, 4)
-save(dirout * "ROMS_TPXO_maps$(SUF).png", fig; px_per_unit = 300 / 72)
+save(dirout * "ROMS_TPXO_maps$(FSUF).png", fig; px_per_unit = 300 / 72)
 
 ## figure 2: RMS per constituent
 rows2 = [r for r in rows if r[:con] in MAJOR || r[:con] in ("M4", "MS4", "MN4")]; CB = [r[:con] * (r[:inf] ? "*" : "") for r in rows2]; nb = length(CB)
@@ -386,11 +477,11 @@ cols = ["#2a78d6", "#eb6834", "#1baf7a"]
 fig2 = Figure(size = (17cm_to_pt, 13cm_to_pt), fontsize = 10)
 ax = Axis(fig2[1, 1]; ylabel = "RMS difference [cm]", xticks = (1:nb, CB), title = "$mapsuf, comparison area",
           yscale = log10, yminorticksvisible = true, yminorgridvisible = true)
-ser = [("ROMS barotropic vs TPXO10, shelf (h < $(Int(HSHELF)) m)", :rms_sh), ("ROMS barotropic vs TPXO10, deep", :rms_dp), ("ROMS vs TPXO10, unfiltered", :rms_full)]
+ser = [("ROMS barotropic vs $(TPN), shelf (h < $(Int(HSHELF)) m)", :rms_sh), ("ROMS barotropic vs $(TPN), deep", :rms_dp), ("ROMS vs $(TPN), unfiltered", :rms_full)]
 for (s, (lab, key)) in enumerate(ser)
     barplot!(ax, (1:nb) .+ (s - 2) * 0.27, [max(r[key], 1e-3) for r in rows2]; width = 0.25, color = cols[s], label = lab, fillto = 1e-3, strokewidth = 0)
 end
-scatter!(ax, 1:nb, [r[:S] for r in rows2]; marker = :hline, markersize = 16, color = :black, label = "TPXO10 signal rms")
+scatter!(ax, 1:nb, [r[:S] for r in rows2]; marker = :hline, markersize = 16, color = :black, label = "$(TPN) signal rms")
 ylims!(ax, 1e-2, 2 * maximum(r[:S] for r in rows2))
 Legend(fig2[2, 1], ax; orientation = :horizontal, nbanks = 2, framevisible = false, labelsize = 9)
 ax2 = Axis(fig2[3, 1]; ylabel = "RMS / signal rms [%]", xticks = (1:nb, CB))
@@ -398,9 +489,9 @@ rel = [100 * r[:rms] / r[:S] for r in rows2]
 barplot!(ax2, 1:nb, rel; color = cols[1], strokewidth = 0)
 text!(ax2, 1:nb, rel; text = [@sprintf("%.0f", v) for v in rel], align = (:center, :bottom), offset = (0, 2), fontsize = 8, color = "#52514e")
 ylims!(ax2, 0, 1.25 * maximum(rel))
-Label(fig2[4, 1], "* inferred from S2 / K1 / N2 with the TPXO10 ratio (record too short to separate)", fontsize = 8, tellwidth = false)
+Label(fig2[4, 1], "* inferred from S2 / K1 / N2 with the TPXO ratio (record too short to separate)", fontsize = 8, tellwidth = false)
 rowsize!(fig2.layout, 3, Relative(0.25))
-save(dirout * "ROMS_TPXO_rms$(SUF).png", fig2; px_per_unit = 300 / 72)
+save(dirout * "ROMS_TPXO_rms$(FSUF).png", fig2; px_per_unit = 300 / 72)
 
 ## figure 3: ROMS coherent M2 internal-tide SSH (full - barotropic)
 zit = ZR[:, :, kc("M2")] .- LP["M2"]
@@ -409,7 +500,7 @@ a = Axis(fig3[1, 1]; title = "ROMS coherent M2 internal-tide SSH amplitude [cm]\
 h = heatmap!(a, lonv, latv, rg(nanout(abs.(zit))); colormap = :Blues, colorrange = (0, q(abs.(zit), 0.995)))
 deco!(a)
 Colorbar(fig3[1, 2], h)
-save(dirout * "ROMS_M2_ITssh$(SUF).png", fig3; px_per_unit = 300 / 72)
+save(dirout * "ROMS_M2_ITssh$(FSUF).png", fig3; px_per_unit = 300 / 72)
 
 ## figure 4: 2 x 2 maps of the barotropic rms difference sqrt(|dZ|^2 / 2)
 fig4 = Figure(size = (22cm_to_pt, 24cm_to_pt), fontsize = 10)
@@ -424,13 +515,13 @@ for (n, c) in enumerate(mc)
     deco!(a4)
     Colorbar(fig4[row, 2col], h4; label = "rms difference [cm]", height = Relative(0.8))
 end
-Label(fig4[0, 1:4], "Barotropic tide: rms difference sqrt(|Z_ROMS - Z_TPXO10|² / 2), $mapsuf\n" *
-      "ROMS barotropic = TPXO10 + low-pass(ROMS - TPXO10), $(Int(LC_SD)) / $(Int(LC_D)) km; dotted box: comparison area ($(Int(SPONGE)) km sponge removed)", fontsize = 9, tellwidth = false)
+Label(fig4[0, 1:4], "Barotropic tide: rms difference sqrt(|Z_ROMS - Z_$(TPN)|² / 2), $mapsuf\n" *
+      "ROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)), $(Int(LC_SD)) / $(Int(LC_D)) km; dotted box: comparison area ($(Int(SPONGE)) km sponge removed)", fontsize = 9, tellwidth = false)
 colgap!(fig4.layout, 6); rowgap!(fig4.layout, 6)
-save(dirout * "ROMS_TPXO_rms_maps$(SUF).png", fig4; px_per_unit = 300 / 72)
+save(dirout * "ROMS_TPXO_rms_maps$(FSUF).png", fig4; px_per_unit = 300 / 72)
 
 ## figure 5: 2 x 2 co-tidal maps, ROMS barotropic amplitude and co-phase lines of ROMS (solid, labelled)
-##           and TPXO10 (dashed); phase unwrapped about the area mean, labels mod 360
+##           and TPXO (dashed); phase unwrapped about the area mean, labels mod 360
 fig5 = Figure(size = (22cm_to_pt, 24cm_to_pt), fontsize = 10)
 for (n, c) in enumerate(mc)
     zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
@@ -448,8 +539,8 @@ for (n, c) in enumerate(mc)
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
     Colorbar(fig5[row, 2col], h5; label = "amplitude [cm]", height = Relative(0.8))
 end
-Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\nROMS = TPXO10 + low-pass(ROMS - TPXO10) (black, labelled); TPXO10 co-phase lines dashed orange; thick black: $(Int(HSHELF)) m isobath",
+Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\nROMS = $(TPN) + low-pass(ROMS - $(TPN)) (black, labelled); $(TPN) co-phase lines dashed orange; thick black: $(Int(HSHELF)) m isobath",
       fontsize = 9, tellwidth = false)
 colgap!(fig5.layout, 6); rowgap!(fig5.layout, 6)
-save(dirout * "ROMS_TPXO_cotidal$(SUF).png", fig5; px_per_unit = 300 / 72)
+save(dirout * "ROMS_TPXO_cotidal$(FSUF).png", fig5; px_per_unit = 300 / 72)
 println("figures written to $dirout")

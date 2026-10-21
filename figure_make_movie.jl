@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/energy_flux/m2flux";
-movie_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/energy_flux";
-start_string = "energyflux_M2"
+figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/orlanski_comp/v_snapshot";
+movie_path = "/expanse/lustre/projects/uso101/hchen54/figure/orlanski_comp";
+start_string = "v_100m_comp"
 
 cd(figure_path)
 readdir(figure_path) 
