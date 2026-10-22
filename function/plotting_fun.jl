@@ -27,6 +27,17 @@ function topdown_axis3(pos; title = "", xlabel = "Longitude", ylabel = "Latitude
         zlabelvisible = false, zgridvisible = false, zspinesvisible = false)
 end
 
+# Plain 2D map axis — the default for lon/lat maps. Axis3 always puts the x
+# and y decorations on the same corner (bottom+right or top+left), so it can't
+# give the usual bottom+left layout; a 2D Axis does. plot_curvilinear!'s flat
+# surface and Point3f scatter/text at z = 0 draw fine in it.
+function topdown_axis(pos; title = "", xlabel = "Longitude", ylabel = "Latitude",
+                      aspect = DataAspect(), kwargs...)
+    ax = Axis(pos; title = title, xlabel = xlabel, ylabel = ylabel, aspect = aspect, kwargs...)
+    tightlimits!(ax)   # no padding between the data and the axis frame
+    return ax
+end
+
 function plot_curvilinear!(ax, x, y, data; contour_levels = nothing, contour_color = :black,
                             contour_linewidth = 1, kwargs...)
     hm = surface!(ax, x, y, zeros(size(data)); color = data, shading = NoShading, kwargs...)

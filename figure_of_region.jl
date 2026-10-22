@@ -62,6 +62,9 @@ moor_style = Dict("french" => (marker = :star5,   markersize = 11, color = :mage
 # the left instead so neighboring labels don't run into each other
 moor_label_left = ("french", "M1", "CPIES1", "CPIES5", "CPIES9")
 
+# legend text for each mooring type (falls back to the group name)
+moor_legend = Dict("M" => "NOPP mooring", "french" => "French mooring")
+
 # marks every mooring on the map; z = 0 puts them on the same flat plane as
 # plot_curvilinear!'s surface, and overdraw keeps them from being hidden
 # behind that surface. text! writes each mooring's own name next to its marker.
@@ -71,7 +74,7 @@ function add_mooring!(ax; labels = true)
         st = get(moor_style, g, (marker = :rect, markersize = 6, color = :white))
         scatter!(ax, Point3f.(moor_lon[k], moor_lat[k], 0);
                  marker = st.marker, markersize = st.markersize, color = st.color,
-                 strokecolor = :black, strokewidth = 0.75, overdraw = true, label = g)
+                 strokecolor = :black, strokewidth = 0.75, overdraw = true, label = get(moor_legend, g, g))
     end
     labels || return
     for (n, lon, lat) in zip(moor_name, moor_lon, moor_lat)
@@ -87,7 +90,7 @@ end
 
 ## bathymetry of the 27 km NCOM parent grid, with the mooring array on top
 fig = Figure(size = (700, 670))
-ax = topdown_axis3(fig[1, 1]; title = "Bathymetry")
+ax = topdown_axis(fig[1, 1]; title = "Bathymetry")
 # h is positive up, so -h is depth below the surface
 sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
                        colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
@@ -103,7 +106,7 @@ end
 # pile up on each other; a legend by mooring type is used instead
 add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
-ax.protrusions = (30, 30, 50, 30)   # extra room at the bottom so the x label isn't clipped
+resize_to_layout!(fig)   # shrink the figure to the map's data aspect, trimming white space
 save(joinpath(figure_path, "bathymetry_mooring.png"), fig; px_per_unit = 3.2)
 
 ## same map zoomed in to the 900m resolution NCOM grid, using its own bathymetry
