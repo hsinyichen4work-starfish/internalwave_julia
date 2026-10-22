@@ -59,7 +59,7 @@ sec_zmin = -500.0   # bottom of the depth-section plots (m); set to nothing to s
 ###
 ## BATHYMETRY MAP — where the section line sits
 h_masked = ifelse.(mask_rho .== 0, NaN, h)
-fig = Figure(size = (800, 600))
+fig = Figure(; figkw(18, 13.5)...)
 ax = topdown_axis3(fig[1, 1]; title = "Bathymetry + section line (psi row j = $j_sec)")
 xlims!(ax, lon_lim...)
 ylims!(ax, lat_lim...)
@@ -75,7 +75,7 @@ lines!(ax, Point3f.(sec_line_lon, sec_line_lat, 0); color = :red, linewidth = 3,
 scatter!(ax, [Point3f(sec_lon, sec_lat, 0)]; marker = :circle, markersize = 10,
          color = :yellow, strokecolor = :black, strokewidth = 1, overdraw = true)
 outname_bathy = joinpath(figure_path, "bathymetry_section_line.png")
-save(outname_bathy, fig)
+figsave(outname_bathy, fig)
 println("saved plot to ", outname_bathy)
 fig
 
@@ -125,7 +125,7 @@ hov_time = hov_time[keep]
 hov = reduce(hcat, hov_cols[keep])   # (ni, ntime_total)
 days = Dates.value.(hov_time .- hov_time[1]) ./ 8.64e7
 
-fig = Figure(size = (1000, 1000))
+fig = Figure(; figkw(18, 18)...)
 ax = Axis(fig[1, 1]; title = "1 m vorticity along psi row j = $j_sec, $(Dates.format(hov_time[1], "yyyy-mm-dd HH:MM")) to $(Dates.format(hov_time[end], "yyyy-mm-dd HH:MM"))",
           xlabel = "Distance from west boundary along section (km)",
           ylabel = "Days since $(Dates.format(hov_time[1], "yyyy-mm-dd HH:MM"))")
@@ -133,7 +133,7 @@ hm = heatmap!(ax, sec_dist, days, hov; colormap = Reverse(:RdBu), colorrange = (
 #vlines!(ax, sec_target_km; color = :orange)
 Colorbar(fig[1, 2], hm, label = "s⁻¹")
 outname_hov = joinpath(figure_path, "vorticity_hovmoller_$(Dates.format(hov_time[1], "yyyymmdd_HHMM"))_$(Dates.format(hov_time[end], "yyyymmdd_HHMM")).png")
-save(outname_hov, fig)
+figsave(outname_hov, fig)
 println("saved plot to ", outname_hov)
 
 # same figure zoomed in on a time window (days since hov_time[1])
@@ -142,7 +142,7 @@ zoom_t0, zoom_t1 = hov_time[1] + Hour(24 * zoom_days[1]), hov_time[1] + Hour(24 
 ax.title = "1 m vorticity along psi row j = $j_sec, $(Dates.format(zoom_t0, "yyyy-mm-dd HH:MM")) to $(Dates.format(zoom_t1, "yyyy-mm-dd HH:MM"))"
 ylims!(ax, zoom_days...)
 outname_hov_zoom = joinpath(figure_path, "vorticity_hovmoller_$(Dates.format(zoom_t0, "yyyymmdd_HHMM"))_$(Dates.format(zoom_t1, "yyyymmdd_HHMM")).png")
-save(outname_hov_zoom, fig)
+figsave(outname_hov_zoom, fig)
 println("saved plot to ", outname_hov_zoom)
 
 ##

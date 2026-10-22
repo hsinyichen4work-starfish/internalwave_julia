@@ -132,7 +132,7 @@ println("running with $(nprocs() - 1) worker processes")
         figs = Dict{String, Figure}()
         for b in bands
             Fmag = sqrt.(snap.Fx[b] .^ 2 .+ snap.Fy[b] .^ 2)   # flux magnitude |F|, W m-1
-            fig = Figure(size = (1500, 600))
+            fig = Figure(; figkw(18, 7.2)...)
             fields = [("Fx (along xi)", snap.Fx[b] ./ 1e3, :balance, (-flux_lim, flux_lim)),   # W/m -> kW/m
                       ("Fy (along eta)", snap.Fy[b] ./ 1e3, :balance, (-flux_lim, flux_lim)),
                       ("|F|", Fmag ./ 1e3, :viridis, (0, flux_lim))]
@@ -141,8 +141,8 @@ println("running with $(nprocs() - 1) worker processes")
                 hm = plot_curvilinear!(ax, sub(lon_rho), sub(lat_rho), sub(data); colormap = colormap, colorrange = colorrange)
                 Colorbar(fig[1, 2n], hm, label = "kW m⁻¹")
             end
-            Label(fig[0, :], "baroclinic energy flux, $b ($(band_info[b]))   $(Dates.format(target, "yyyy-mm-dd HH:MM"))", fontsize = 18)
-            save(frame_fname(b, target), fig)
+            Label(fig[0, :], "baroclinic energy flux, $b ($(band_info[b]))   $(Dates.format(target, "yyyy-mm-dd HH:MM"))", fontsize = 13)
+            figsave(frame_fname(b, target), fig)
             figs[b] = fig
         end
         free_memory()
@@ -226,7 +226,7 @@ end
 # plot the mean, one figure per band, saved in figure_path
 mean_lim = 30   # kW/m
 for b in sort(collect(keys(band_info)))
-    fig_mean = Figure(size = (1500, 600))
+    fig_mean = Figure(; figkw(18, 7.2)...)
     fields_mean = [("Fx (along xi)", Fx_mean[b], :balance, (-mean_lim, mean_lim)),
                    ("Fy (along eta)", Fy_mean[b], :balance, (-mean_lim, mean_lim)),
                    ("|mean F|", F_mag_mean[b], :viridis, (0, mean_lim))]
@@ -236,9 +236,9 @@ for b in sort(collect(keys(band_info)))
         Colorbar(fig_mean[1, 2n], hm, label = "kW m⁻¹")
     end
     Label(fig_mean[0, :], "baroclinic energy flux, $b ($(band_info[b])), mean of $(Dates.format(mean_start, "yyyy-mm-dd HH:MM")) -> " *
-          "$(Dates.format(mean_end, "yyyy-mm-dd HH:MM"))  ($nmean hourly records)", fontsize = 18)
+          "$(Dates.format(mean_end, "yyyy-mm-dd HH:MM"))  ($nmean hourly records)", fontsize = 13)
     mean_fname = joinpath(figure_path, "energyflux_mean_$(b)_$(Dates.format(mean_start, "yyyymmdd"))_$(Dates.format(mean_end, "yyyymmdd")).png")
-    save(mean_fname, fig_mean)
+    figsave(mean_fname, fig_mean)
     println("saved ", mean_fname)
     isinteractive() && display(fig_mean)
 end

@@ -108,7 +108,7 @@ end
             continue
         end
 
-        fig = Figure(size = (800, 600))
+        fig = Figure(; figkw(18, 13.5)...)
         ax = topdown_axis3(fig[1, 1]; title = "Sea surface height (zeta), $(str1[t])")
         sp = plot_curvilinear!(ax, lon_par, lat_par, zeta_masked[:, :, t];
                                 colormap = Reverse(:RdBu), colorrange = (-1, 1))
@@ -119,7 +119,7 @@ end
                color = :black, linewidth = 2)
         xlims!(ax, lon_chd_lims...)
         ylims!(ax, lat_chd_lims...)
-        save(outname_zeta, fig)
+        figsave(outname_zeta, fig)
         println("saved plot to ", outname_zeta)
     end
 end
@@ -174,7 +174,7 @@ end
         temp_1m = slice_at_depth_ncom(zm3, kb, temp_masked, -1.0)
         temp_100m = slice_at_depth_ncom(zm3, kb, temp_masked, -100.0)
 
-        fig = Figure(size = (1400, 600))
+        fig = Figure(; figkw(18, 7.7)...)
         for (col, (field, depth_label, crange)) in enumerate(((temp_1m, "1 m", (24, 30)), (temp_100m, "100 m", (15, 30))))
             ax = topdown_axis3(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_par, lat_par, field; colormap = :thermal, colorrange = crange)
@@ -186,7 +186,7 @@ end
             xlims!(ax, lon_chd_lims...)
             ylims!(ax, lat_chd_lims...)
         end
-        save(outname_temp, fig)
+        figsave(outname_temp, fig)
         println("saved plot to ", outname_temp)
     end
 
@@ -263,7 +263,7 @@ end
             u_east_1m = slice_at_depth_ncom(zm3, kb, u_east_masked, -1.0)
             v_north_1m = slice_at_depth_ncom(zm3, kb, v_north_masked, -1.0)
 
-            fig = Figure(size = (800, 600))
+            fig = Figure(; figkw(18, 13.5)...)
             ax = topdown_axis3(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_par, lat_par, speed_1m; colormap = :speed, colorrange = (0, 2))
             Colorbar(fig[1, 2], sp, label = "m/s")
@@ -273,14 +273,14 @@ end
                    color = :black, linewidth = 2)
             xlims!(ax, lon_chd_lims...)
             ylims!(ax, lat_chd_lims...)
-            save(outname_speed_novec, fig)
+            figsave(outname_speed_novec, fig)
             println("saved plot to ", outname_speed_novec)
 
             quiver_curvilinear!(ax, lon_par, lat_par, u_east_1m, v_north_1m;
                                  skip = uv_skip, xlim = lon_chd_lims, ylim = lat_chd_lims,
                                  lengthscale = 0.5, color = :black,
                                  shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
-            save(outname_speed, fig)
+            figsave(outname_speed, fig)
             println("saved plot to ", outname_speed)
         end
 
@@ -302,7 +302,7 @@ end
             vor_psi_masked = ifelse.(mask_p .== 0, NaN32, vor_psi)
             vor_1m = slice_at_depth_ncom(zm3_p, kb_p, vor_psi_masked, -1.0)
 
-            fig = Figure(size = (800, 600))
+            fig = Figure(; figkw(18, 13.5)...)
             ax = topdown_axis3(fig[1, 1]; title = "Relative vorticity, surface, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_psi, lat_psi, vor_1m;
                                     colormap = Reverse(:RdBu), colorrange = (-5e-5, 5e-5))
@@ -313,14 +313,14 @@ end
                    color = :black, linewidth = 2)
             xlims!(ax, lon_chd_lims...)
             ylims!(ax, lat_chd_lims...)
-            save(outname_vor_novec, fig)
+            figsave(outname_vor_novec, fig)
             println("saved plot to ", outname_vor_novec)
 
             quiver_curvilinear!(ax, lon_par, lat_par, u_east_1m, v_north_1m;
                                  skip = uv_skip, xlim = lon_chd_lims, ylim = lat_chd_lims,
                                  lengthscale = 0.5, color = :black,
                                  shaftwidth = 1.5, tipwidth = 5, tiplength = 6)
-            save(outname_vor, fig)
+            figsave(outname_vor, fig)
             println("saved plot to ", outname_vor)
         end
     end

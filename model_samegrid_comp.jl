@@ -10,6 +10,7 @@ println("running with $(nprocs() - 1) worker processes")
     using NCDatasets, Dates, Statistics, CairoMakie
     CairoMakie.activate!()
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
+    include("/home/hchen54/internalwave_julia/function/fig_setup.jl")   # figkw, figsave
     include("/home/hchen54/internalwave_julia/function/zlevs3.jl")
     include("/home/hchen54/internalwave_julia/function/uv2rho.jl")
 
@@ -189,7 +190,7 @@ println("overlap: ", length(common_times), " records, ", first(common_times), " 
 
     function plot_comp3(outname, field2, field1, timestr; varlabel, units, clim, dclim, cmap = :viridis)
         diff = field2 .- field1
-        fig = Figure(size = (2000, 650))
+        fig = Figure(; figkw(18, 5.8)...)
         panels = ((field2, "$title2", cmap, (clim[1], clim[2])),
                   (field1, "$title1", cmap, (clim[1], clim[2])),
                   (diff,   "$title2 − $title1", Reverse(:RdBu), (-dclim, dclim)))
@@ -202,7 +203,7 @@ println("overlap: ", length(common_times), " records, ", first(common_times), " 
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             Colorbar(fig[1, 2i], sp, label = units)
         end
-        save(outname, fig)
+        figsave(outname, fig)
         println("saved plot to ", outname)
     end
 

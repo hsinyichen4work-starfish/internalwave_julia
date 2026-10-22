@@ -195,8 +195,8 @@ GLOBAL_surftemp_f = coalesce.(GLOBAL_surftemp, NaN32)
 # uv_par / uv_glb are optional (u, v) tuples drawn as quiver arrows on top
 @everywhere function comp_figure(F_par, F_glb, outname; title, par_title = "NCOM", colormap, colorrange, label,
                                  uv_par = nothing, uv_glb = nothing)
-    fig = Figure(size = (1400, 650), figure_padding = (20, 20, 50, 20))   # extra bottom room: Axis3 labels sit outside the layout
-    Label(fig[0, 1:2], title; fontsize = 20)
+    fig = Figure(; figkw(18, 8.4)..., figure_padding = (14, 14, 36, 14))   # extra bottom room: Axis3 labels sit outside the layout
+    Label(fig[0, 1:2], title; fontsize = 14)
     ax1 = topdown_axis3(fig[1, 1]; title = par_title)
     ax2 = topdown_axis3(fig[1, 2]; title = "GLOBAL")
     sp = plot_curvilinear!(ax1, lon_par, lat_par, F_par; colormap = colormap, colorrange = colorrange)
@@ -219,7 +219,7 @@ GLOBAL_surftemp_f = coalesce.(GLOBAL_surftemp, NaN32)
         xlims!(ax, lon_chd_lims...)
         ylims!(ax, lat_chd_lims...)
     end
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved plot to ", outname)
 end
 

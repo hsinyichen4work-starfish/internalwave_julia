@@ -122,7 +122,7 @@ function add_mooring!(ax; labels = true)
 end
 
 ## bathymetry of the 27 km NCOM parent grid, with the mooring array on top
-fig = Figure(size = (700, 670))
+fig = Figure(; figkw(18, 17.2)...)
 ax = topdown_axis3(fig[1, 1]; title = "Bathymetry")
 # h is positive up, so -h is depth below the surface
 sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
@@ -140,10 +140,10 @@ end
 add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)   # extra room at the bottom so the x label isn't clipped
-save(joinpath(figure_path, "bathymetry_mooring.png"), fig; px_per_unit = 3.2)
+figsave(joinpath(figure_path, "bathymetry_mooring.png"), fig)
 
 ## same map zoomed in to the 900m resolution NCOM grid, using its own bathymetry
-fig = Figure(size = (700, 670))
+fig = Figure(; figkw(18, 17.2)...)
 ax = topdown_axis3(fig[1, 1]; title = "Bathymetry")
 sp = plot_curvilinear!(ax, lon_rho_9, lat_rho_9, -h9;
                        colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
@@ -156,10 +156,10 @@ end
 add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)
-save(joinpath(figure_path, "bathymetry_mooring_ncom900m.png"), fig; px_per_unit = 3.2)
+figsave(joinpath(figure_path, "bathymetry_mooring_ncom900m.png"), fig)
 
 ## proposed extended 900m ROMS domain (+222 cells / ~200 km west/east/north) over the 27 km bathymetry
-fig = Figure(size = (700, 670))
+fig = Figure(; figkw(18, 17.2)...)
 ax = topdown_axis3(fig[1, 1]; title = "Bathymetry, extended 900m ROMS domain")
 sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
                        colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
@@ -176,10 +176,10 @@ end
 add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 3, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)
-save(joinpath(figure_path, "bathymetry_mooring_roms900m_ext.png"), fig; px_per_unit = 3.2)
+figsave(joinpath(figure_path, "bathymetry_mooring_roms900m_ext.png"), fig)
 
 ## region for the 2700 m grid: 900m ROMS extended +222 cells W/E, +666 cells N, none S
-fig = Figure(size = (700, 670))
+fig = Figure(; figkw(18, 17.2)...)
 ax = topdown_axis3(fig[1, 1]; title = "Bathymetry, region for the 2700 m grid")
 sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
                        colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
@@ -196,4 +196,4 @@ scatter!(ax, Point3f(mid_extN[1], mid_extN[2], 0); marker = :xcross, markersize 
          strokecolor = :black, strokewidth = 0.75, overdraw = true, label = "middle point")
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)
-save(joinpath(figure_path, "bathymetry_mooring_roms900m_extN$(n_ext_n).png"), fig; px_per_unit = 3.2)
+figsave(joinpath(figure_path, "bathymetry_mooring_roms900m_extN$(n_ext_n).png"), fig)

@@ -99,7 +99,7 @@ function plot_bry_timeseries(varname, unit_label, boundary, datestr, datestr_sav
                               bry_realtime, model_realtime, bry_series, model_series)
     subfolder = "$(varname)_$(boundary)_bry"
     outname = figpath(subfolder, "$(subfolder)_$(datestr_save).png")
-    fig = Figure(size = (800, 650))
+    fig = Figure(; figkw(18, 14.6)...)
     for (i, idx) in enumerate(nchoose)
         ax = Axis(fig[i, 1], xlabel = "time", ylabel = varname,
         title = "$varname at lon = $(round(lon_line[idx], digits=2)), lat = $(round(lat_line[idx], digits=2))")
@@ -108,9 +108,9 @@ function plot_bry_timeseries(varname, unit_label, boundary, datestr, datestr_sav
         scatterlines!(ax, model_realtime, model_series[idx,:], color = :orange,
             linewidth = 2, marker = :circle, markersize = 10, linestyle = :dash)
     end
-    Label(fig[0, :], "$varname ($unit_label) at $datestr — $boundary boundary", fontsize = 24, font = :bold, tellwidth = false)
+    Label(fig[0, :], "$varname ($unit_label) at $datestr — $boundary boundary", fontsize = 17, font = :bold, tellwidth = false)
     rowsize!(fig.layout, 0, Fixed(40))   # keep the label row thin so it doesn't steal space from the axes
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved plot to ", outname)
 end
 
@@ -257,7 +257,7 @@ end   # @everywhere begin — shared setup/data/helpers, available on every work
                                   depth_range = (-200, 0), suffix = "")
         subfolder = "$(varname)$(suffix)_$(boundary)_bry"
         outname = figpath(subfolder, "$(subfolder)_$(datestr_save).png")
-        fig = Figure(size = (1100, 700), figure_padding = (10, 80, 60, 10))   # extra right padding for the offset ylabel, extra bottom for the xlabel — both were being clipped at the default padding
+        fig = Figure(; figkw(18, 11.5)..., figure_padding = (7, 57, 43, 7))   # extra right padding for the offset ylabel, extra bottom for the xlabel — both were being clipped at the default padding
         hm = nothing   # last-drawn heatmap handle, reused below for the one shared colorbar
         for (i, idx) in enumerate(nchoose)
             loc = "lon = $(round(lon_line[idx], digits=2)), lat = $(round(lat_line[idx], digits=2))"
@@ -266,7 +266,7 @@ end   # @everywhere begin — shared setup/data/helpers, available on every work
                 title = "model $varname, $loc",
                 xlabel = i == length(nchoose) ? "hours since $(Dates.format(realtime[1], "yyyy-mm-dd HH:MM"))" : "",
                 ylabel = "depth (m)",
-                aspect = (3, 1, 1), ylabeloffset = 80)
+                aspect = (3, 1, 1), ylabeloffset = 57)
             X = repeat(reshape(time_num, 1, :), N, 1)
             Y = z[i, :, :]
             C = C_model_full[idx, :, :]
@@ -290,11 +290,11 @@ end   # @everywhere begin — shared setup/data/helpers, available on every work
         end
         Colorbar(fig[1:length(nchoose), 3], hm, label = cbar_label)
         depth_note = suffix == "" ? "" : " (whole depth)"
-        Label(fig[0, :], "$varname at $datestr — model (left) vs bry (right), $boundary boundary$depth_note", fontsize = 24, font = :bold, tellwidth = false)
+        Label(fig[0, :], "$varname at $datestr — model (left) vs bry (right), $boundary boundary$depth_note", fontsize = 17, font = :bold, tellwidth = false)
         rowgap!(fig.layout, 8)
         colgap!(fig.layout, 8)
         rowsize!(fig.layout, 0, Fixed(40))
-        save(outname, fig)
+        figsave(outname, fig)
         println("saved plot to ", outname)
     end
 
@@ -345,7 +345,7 @@ end   # @everywhere begin — shared setup/data/helpers, available on every work
     function plot_depth_compare(varname, unit_label)
         subfolder = "$(varname)_depth_$(boundary)_bry"
         outname = figpath(subfolder, "$(subfolder)_$(datestr_save).png")
-        fig = Figure(size = (1200, 650))
+        fig = Figure(; figkw(18, 9.8)...)
         for (i, idx) in enumerate(nchoose)
             for (col, depthname) in enumerate(depth_order)
                 key = "$(varname)_$(depthname)"
@@ -357,9 +357,9 @@ end   # @everywhere begin — shared setup/data/helpers, available on every work
                     linewidth = 2, marker = :circle, markersize = 10, linestyle = :dash)
             end
         end
-        Label(fig[0, :], "$varname ($unit_label) at $datestr — $boundary boundary", fontsize = 24, font = :bold, tellwidth = false)
+        Label(fig[0, :], "$varname ($unit_label) at $datestr — $boundary boundary", fontsize = 17, font = :bold, tellwidth = false)
         rowsize!(fig.layout, 0, Fixed(40))
-        save(outname, fig)
+        figsave(outname, fig)
         println("saved plot to ", outname)
     end
 
@@ -433,7 +433,7 @@ end
         nchoose = clamp.(round.(Int, nchoose_fracs .* Lline), 1, Lline)
 
         outname = figpath("flux_timeplot", "$(varname)_$(datestr_save).png")
-        fig = Figure(size = (800, 650))
+        fig = Figure(; figkw(18, 14.6)...)
         for (i, idx) in enumerate(nchoose)
             ax = Axis(fig[i, 1], xlabel = "time", ylabel = varname,
                 title = "$varname at lon = $(round(lon_line[idx], digits=2)), lat = $(round(lat_line[idx], digits=2))")
@@ -441,9 +441,9 @@ end
                 linewidth = 3, marker = :circle, markersize = 18)
             hlines!(ax, [0.0]; color = :gray, linestyle = :dot)   # sign flip = flux direction switches
         end
-        Label(fig[0, :], "$varname (m⁴/s³) at $datestr", fontsize = 24, font = :bold, tellwidth = false)
+        Label(fig[0, :], "$varname (m⁴/s³) at $datestr", fontsize = 17, font = :bold, tellwidth = false)
         rowsize!(fig.layout, 0, Fixed(40))
-        save(outname, fig)
+        figsave(outname, fig)
         println("saved plot to ", outname)
     end
 

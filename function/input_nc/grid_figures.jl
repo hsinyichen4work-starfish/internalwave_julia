@@ -8,6 +8,7 @@
 
 using CairoMakie
 include(joinpath(@__DIR__, "..", "plotting_fun.jl"))   # topdown_axis3, plot_curvilinear!
+include(joinpath(@__DIR__, "..", "fig_setup.jl"))      # figkw, figsave
 
 """
     match_topo_figures(grd_nc, diag, dx, path_figure)
@@ -29,7 +30,7 @@ function match_topo_figures(grd_nc, diag, dx, path_figure)
 
     # ---- match_boundary_topo diagnostic plot ----
     sc = extrema(filter(!isnan, hcn))
-    fig = Figure(size = (1400, 1300))
+    fig = Figure(; figkw(18, 16.7)...)
     hm = panel!(fig[1, 1], diag.hpi, "Interpolated Parent Topo"; colorrange = sc)
     Colorbar(fig[1, 2], hm)
     hm = panel!(fig[1, 3], hcn, "Boundary-Matched Child Topo"; colorrange = sc)
@@ -38,17 +39,17 @@ function match_topo_figures(grd_nc, diag, dx, path_figure)
     Colorbar(fig[2, 2], hm)
     hm = panel!(fig[2, 3], diag.alpha, "Parent/Child Transition Weight (α)")
     Colorbar(fig[2, 4], hm)
-    save(joinpath(path_figure, "match_topo_check_$(dx).png"), fig)
+    figsave(joinpath(path_figure, "match_topo_check_$(dx).png"), fig)
 
     # ---- grid_boundary_match_figure ----
     levels = vcat([0, 100], 500:500:5000)
-    fig = Figure(size = (2000, 800))
+    fig = Figure(; figkw(18, 7.2)...)
     hm = panel!(fig[1, 1], h_orig, "original"; colorrange = (0, 5000), contour_levels = levels)
     Colorbar(fig[1, 2], hm)
     hm = panel!(fig[1, 3], hcn, "after match"; colorrange = (0, 5000), contour_levels = levels)
     Colorbar(fig[1, 4], hm)
     hm = panel!(fig[1, 5], hcn .- h_orig, "after match - original"; colorrange = (-10, 10), colormap = :balance)
     Colorbar(fig[1, 6], hm)
-    save(joinpath(path_figure, "match_topo_check_$(dx)_2.png"), fig)
+    figsave(joinpath(path_figure, "match_topo_check_$(dx)_2.png"), fig)
     return nothing
 end

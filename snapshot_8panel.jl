@@ -62,7 +62,7 @@ ref_lat = lat_lim[1] + 0.07 * (lat_lim[2] - lat_lim[1])
 function add_quiver!(ax, u_east, v_north; scale = 1)
     quiver_curvilinear!(ax, lon_rho, lat_rho, u_east, v_north; skip = skip, quiver_kw(scale)...)
     arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; quiver_kw(scale)...)
-    text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 22 * scale,
+    text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 11 * scale,
           align = (:left, :bottom), offset = (0, 6 * scale), overdraw = true)
 end
 
@@ -105,7 +105,7 @@ function load_snapshot(t_target)
 end
 
 ##
-fig = Figure(size = (2000, 1050), fontsize = 20, figure_padding = (60, 10, 40, 10))
+fig = Figure(; figkw(18, 9.4)..., figure_padding = (30, 5, 20, 5))
 panel = 'a'
 sp_speed = sp_temp = nothing
 for (col, t) in enumerate(snap_times)
@@ -133,5 +133,5 @@ colgap!(fig.layout, 0)
 rowgap!(fig.layout, 0)
 
 outname = joinpath(figure_path, "snapshot_speed_temp_8panel.png")
-save(outname, fig; px_per_unit = 2)
+figsave(outname, fig)
 println("saved plot to ", outname)

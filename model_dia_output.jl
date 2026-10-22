@@ -63,7 +63,7 @@ frame_fname(fr) = joinpath(frame_path, "dia_flux_$(Dates.format(fr.date, "yyyymm
 
 up_o, vp_o, F_o = Observable.(sub.(load_flux(frames[1])))
 title_o = Observable("")
-fig = Figure(size = (1500, 600))
+fig = Figure(; figkw(18, 7.2)...)
 fields = [("up (along xi)", up_o, :balance, (-flux_lim, flux_lim)),
           ("vp (along eta)", vp_o, :balance, (-flux_lim, flux_lim)),
           ("F_mag", F_o, :viridis, (0, flux_lim))]
@@ -74,13 +74,13 @@ for (n, (title, data, colormap, colorrange)) in enumerate(fields)
                   colormap = colormap, colorrange = colorrange)
     Colorbar(fig[1, 2n], hm, label = "kW m⁻¹")
 end
-Label(fig[0, :], title_o, fontsize = 18)
+Label(fig[0, :], title_o, fontsize = 13)
 
 @time for (k, fr) in enumerate(frames)
     isfile(frame_fname(fr)) && continue
     up_o[], vp_o[], F_o[] = sub.(load_flux(fr))
     title_o[] = "ROMS dia baroclinic energy flux (1-hr mean)   $(Dates.format(fr.date, "yyyy-mm-dd HH:MM"))"
-    save(frame_fname(fr), fig)
+    figsave(frame_fname(fr), fig)
     free_memory()
     k % 50 == 0 && println("frame $k / $(length(frames))")
 end
@@ -119,7 +119,7 @@ println("mean flux [kW/m]:  up ", max_min(filter(isfinite, up_mean)), "  vp ", m
 
 ##
 mean_lim = 30   # kW/m
-fig_mean = Figure(size = (1500, 600))
+fig_mean = Figure(; figkw(18, 7.2)...)
 fields_mean = [("up (along xi)", up_mean, :balance, (-mean_lim, mean_lim)),
                ("vp (along eta)", vp_mean, :balance, (-mean_lim, mean_lim)),
                ("F_mag", F_mag_mean, :viridis, (0, mean_lim))]
@@ -129,8 +129,8 @@ for (n, (title, data, colormap, colorrange)) in enumerate(fields_mean)
     Colorbar(fig_mean[1, 2n], hm, label = "kW m⁻¹")
 end
 Label(fig_mean[0, :], "ROMS dia baroclinic energy flux, mean of $(Dates.format(frames_avg[1].date, "yyyy-mm-dd HH:MM")) -> " *
-      "$(Dates.format(frames_avg[end].date, "yyyy-mm-dd HH:MM"))  ($(length(frames_avg)) hourly records)", fontsize = 18)
+      "$(Dates.format(frames_avg[end].date, "yyyy-mm-dd HH:MM"))  ($(length(frames_avg)) hourly records)", fontsize = 13)
 mean_fname = joinpath(figure_path, "dia_flux_mean_$(Dates.format(frames_avg[1].date, "yyyymmdd"))_$(Dates.format(frames_avg[end].date, "yyyymmdd")).png")
-save(mean_fname, fig_mean)
+figsave(mean_fname, fig_mean)
 println("saved ", mean_fname)
 fig_mean

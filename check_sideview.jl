@@ -36,14 +36,14 @@ end   # closes @everywhere begin — only shared *data* lives above this line;
 
 ##
 outname = joinpath(figure_path, "crossline.png")
-fig = Figure()
+fig = Figure(; figkw(18, 13.5)...)
 ax = Axis(fig[1, 1],aspect = DataAspect())
 lines!(ax, lon_chd_b, lat_chd_b, zeros(length(lon_chd_b)), color = :black, linewidth = 2)
 for (i, n) in enumerate(nchoose)
     lines!(ax, lon_rho[:, n], lat_rho[:, n], color = colors[i], linewidth = 1)
 end
 fig
-save(outname, fig)
+figsave(outname, fig)
 println("saved plot to ", outname)
 
 ##
@@ -108,7 +108,7 @@ println("saved plot to ", outname)
         end
 
         function plot_sideview(n, t)
-            fig = Figure(size = (800, 850), figure_padding = (10, 80, 60, 10))
+            fig = Figure(; figkw(18, 19.1)..., figure_padding = (7, 57, 43, 7))
 
             ax = Axis(fig[1, 1],aspect = DataAspect())
             lines!(ax, lon_chd_b, lat_chd_b, zeros(length(lon_chd_b)), color = :black, linewidth = 2)
@@ -143,7 +143,7 @@ println("saved plot to ", outname)
                 contour_color = RGBf(0.6, 0.6, 0.6),contour_linewidth = 1)
             ylims!(ax7, -200,0)
             Colorbar(fig[3:4, 3], hm)
-            Label(fig[0, :], Dates.format.(realtime[t], "yyyy/mm/dd HH:MM"), fontsize = 18)
+            Label(fig[0, :], Dates.format.(realtime[t], "yyyy/mm/dd HH:MM"), fontsize = 13)
             return fig
         end
 
@@ -151,7 +151,7 @@ println("saved plot to ", outname)
         for n in eachindex(nchoose), t in 1:ntime
             fig = plot_sideview(n, t)
             outname = figpath("n_$(nchoose[n])", "sideview_n$(nchoose[n])_$(Dates.format(realtime[t], "yyyymmddHHMM")).png")
-            save(outname, fig)
+            figsave(outname, fig)
             println("saved plot to ", outname)
         end
     end

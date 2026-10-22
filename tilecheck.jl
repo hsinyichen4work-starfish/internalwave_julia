@@ -1,4 +1,5 @@
 using NCDatasets, CairoMakie, Statistics, Printf
+include("/home/hchen54/internalwave_julia/function/fig_setup.jl")   # figkw, figsave
 
 base = "/expanse/lustre/projects/uso101/hchen54"
 rec  = get(ARGS, 1, "roms_his.20220824040000.nc")
@@ -48,7 +49,7 @@ for (name, f) in runs
     println("$name time = $t")
 end
 
-fig = Figure(size=(1400, 1300))
+fig = Figure(; figkw(18, 16.7)...)
 for (c, name) in enumerate(["old", "new"])
     r = res[name]
     ax = Axis(fig[1, c], title="$name surface vorticity  $rec", aspect=DataAspect())
@@ -58,10 +59,10 @@ for (c, name) in enumerate(["old", "new"])
     hm2 = heatmap!(ax2, r.h, colormap=:viridis, colorrange=(0, 60))
     c == 2 && Colorbar(fig[2, 3], hm2)
 end
-save(joinpath(outdir, "tilecheck_" * replace(rec, ".nc" => "") * ".png"), fig)
+figsave(joinpath(outdir, "tilecheck_" * replace(rec, ".nc" => "") * ".png"), fig)
 
 # difference of hbls seam profile, for plotting
-fig2 = Figure(size=(1200, 600))
+fig2 = Figure(; figkw(18, 9)...)
 for (k, lab) in enumerate(("x (per i)", "y (per j)"))
     ax = Axis(fig2[1, k], title="hbls mean |2nd diff| along $lab", yscale=log10)
     for name in ["old", "new"]
@@ -70,4 +71,4 @@ for (k, lab) in enumerate(("x (per i)", "y (per j)"))
     end
     axislegend(ax)
 end
-save(joinpath(outdir, "seam_" * replace(rec, ".nc" => "") * ".png"), fig2)
+figsave(joinpath(outdir, "seam_" * replace(rec, ".nc" => "") * ".png"), fig2)

@@ -89,7 +89,7 @@ function add_mooring!(ax; labels = true)
 end
 
 ## bathymetry of the 27 km NCOM parent grid, with the mooring array on top
-fig = Figure(size = (700, 670))
+fig = Figure(; figkw(18, 17.2)...)
 ax = topdown_axis(fig[1, 1]; title = "Bathymetry")
 # h is positive up, so -h is depth below the surface
 sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
@@ -107,10 +107,10 @@ end
 add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
 resize_to_layout!(fig)   # shrink the figure to the map's data aspect, trimming white space
-save(joinpath(figure_path, "bathymetry_mooring.png"), fig; px_per_unit = 3.2)
+figsave(joinpath(figure_path, "bathymetry_mooring.png"), fig)
 
 ## same map zoomed in to the 900m resolution NCOM grid, using its own bathymetry
-fig = Figure(size = (700, 670))
+fig = Figure(; figkw(18, 17.2)...)
 ax = topdown_axis3(fig[1, 1]; title = "Bathymetry")
 sp = plot_curvilinear!(ax, lon_rho_9, lat_rho_9, -h9;
                        colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
@@ -123,4 +123,4 @@ end
 add_mooring!(ax; labels = false)
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)
-save(joinpath(figure_path, "bathymetry_mooring_ncom900m.png"), fig; px_per_unit = 3.2)
+figsave(joinpath(figure_path, "bathymetry_mooring_ncom900m.png"), fig)

@@ -165,7 +165,7 @@ function add_quiver!(ax, u, v)
     keep = .!isnan.(us) .& .!isnan.(vs)
     arrows2d!(ax, xs[keep], ys[keep], us[keep], vs[keep]; quiver_kw...)
     arrows2d!(ax, [ref_lon], [ref_lat], [ref_speed], [0.0]; quiver_kw...)
-    text!(ax, ref_lon, ref_lat; text = "$(ref_speed) m/s", fontsize = 14,
+    text!(ax, ref_lon, ref_lat; text = "$(ref_speed) m/s", fontsize = 10,
           align = (:left, :bottom), offset = (0, 6))
 end
 
@@ -190,7 +190,7 @@ function plot_field(field, u, v, title, label, cmap, outfile; colorrange = nothi
         println("no HYCOM color range for $key, using this map's own range")
         quantile(filter(!isnan, vec(field)), (0.02, 0.98))
     end
-    fig = Figure(size = (800, 760))
+    fig = Figure(; figkw(18, 17.1)...)
     ax = Axis(fig[1, 1], title = title, xlabel = "lon", ylabel = "lat", aspect = DataAspect(),
               backgroundcolor = :gray80,   # land / below seafloor (NaN) shows as gray, like HYCOM
               xgridvisible = false, ygridvisible = false)
@@ -203,7 +203,7 @@ function plot_field(field, u, v, title, label, cmap, outfile; colorrange = nothi
     limits!(ax, lon_lim..., lat_lim...)
     Colorbar(fig[1, 2], hm, label = label)
     Legend(fig[2, 1:2], ax; orientation = :horizontal, framevisible = false)
-    save(outfile, fig)
+    figsave(outfile, fig)
     println("saved ", outfile)
 end
 

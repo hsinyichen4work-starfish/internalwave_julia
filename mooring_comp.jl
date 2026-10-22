@@ -47,7 +47,7 @@ end
 # a flat surface! coloured by h draws every cell at its true lon/lat instead.
 st = 4                                                    # plot every 4th point: much faster, looks the same
 h_plot = Float32.(ifelse.(mask_rho .== 1, h, NaN))        # land -> NaN (left blank)
-fig = Figure(size = (900, 800))
+fig = Figure(; figkw(18, 16)...)
 ax = Axis(fig[1, 1]; xlabel = "Longitude (°E)", ylabel = "Latitude (°N)", aspect = DataAspect(),
     title = "Bathymetry (ROMS 900 m grid) and mooring positions")
 sf = surface!(ax, lon_rho[1:st:end, 1:st:end], lat_rho[1:st:end, 1:st:end], zeros(Float32, size(h_plot[1:st:end, 1:st:end]));
@@ -65,12 +65,12 @@ for (label, ingroup, color) in mor_groups
     isempty(names) && continue
     lons, lats = [mor_loc[n][1] for n in names], [mor_loc[n][2] for n in names]
     sc = scatter!(ax, lons, lats; color = color, strokecolor = :white, strokewidth = 1, markersize = 10, label = label)
-    tx = text!(ax, lons, lats; text = names, offset = (5, 5), fontsize = 11, color = :white)
+    tx = text!(ax, lons, lats; text = names, offset = (5, 5), fontsize = 8, color = :white)
     translate!(sc, 0, 0, 2); translate!(tx, 0, 0, 2)
 end
 axislegend(ax; position = :rb)
 outname = joinpath(figure_path, "bathymetry_moorings.png")
-save(outname, fig)
+figsave(outname, fig)
 println("saved ", outname)
 fig
 
@@ -313,7 +313,7 @@ src_colors = (mooring = :black, roms = "#2a78d6", ncom = "#eb6834", cmems = "#2e
 function plot_time_depth(panels; zlim, clim, colormap, levels, cblabel, title, fname,
                          contour_color = (:white, 0.6), ctd_lines = false, contours = true, zstep = 2.0)
     zg = zlim[1]:zstep:zlim[2]             # depths the panels are drawn on (fields are interpolated to them)
-    fig = Figure(size = (1100, 900))
+    fig = Figure(; figkw(18, 14.7)...)
     axs, hms = Axis[], []
     for (row, (ptitle, time, z, f)) in enumerate(panels)
         ax = Axis(fig[row, 1]; title = ptitle, titlealign = :left, ylabel = "Depth (m)",
@@ -334,9 +334,9 @@ function plot_time_depth(panels; zlim, clim, colormap, levels, cblabel, title, f
     hidexdecorations!.(axs[1:end-1]; ticks = false)
     axs[end].xlabel = "Date (2022)"
     Colorbar(fig[1:length(panels), 2], hms[1]; label = cblabel, ticks = levels)
-    Label(fig[0, :], title, fontsize = 18)
+    Label(fig[0, :], title, fontsize = 13)
     outname = joinpath(figure_path, fname)
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved ", outname)
     return fig
 end
@@ -344,7 +344,7 @@ end
 # Line plots, one panel per depth, one line per data source.
 # sources = ((label, time, field, color), …) with field of size (npanel, nt), each on its own time axis.
 function plot_lines(panel_titles, sources; ylabel, title, fname, zeroline = false)
-    fig = Figure(size = (1100, 1100))
+    fig = Figure(; figkw(18, 18)...)
     axs = Axis[]
     for (k, ptitle) in enumerate(panel_titles)
         ax = Axis(fig[k, 1]; title = ptitle, titlealign = :left, ylabel = ylabel, xticks = xticks)
@@ -360,9 +360,9 @@ function plot_lines(panel_titles, sources; ylabel, title, fname, zeroline = fals
     axs[end].xlabel = "Date (2022)"
     n = length(panel_titles)
     Legend(fig[n+1, 1], axs[1]; orientation = :horizontal, framevisible = false, tellwidth = false)
-    Label(fig[0, :], title, fontsize = 18, tellwidth = false)
+    Label(fig[0, :], title, fontsize = 13, tellwidth = false)
     outname = joinpath(figure_path, fname)
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved ", outname)
     return fig
 end
@@ -545,7 +545,7 @@ end
 function plot_scatter(panel_titles, time, x, ys; unit, title, fname, xname = "Mooring", angle = false, markersize = 9)
     td = tday(time)
     crange = (tday(model_time[1]), tday(model_time[end]))
-    fig = Figure(size = (370 * length(panel_titles) + 90, 370 * length(ys) + 60))
+    fig = Figure(; figkw(18, 18 * (370 * length(ys) + 60) / (370 * length(panel_titles) + 90))...)
     for (row, (label, y, color)) in enumerate(ys), (k, ptitle) in enumerate(panel_titles)
         good = findall(.!isnan.(x[k, :]) .& .!isnan.(y[k, :]))
         xs, yv = x[k, good], y[k, good]
@@ -567,9 +567,9 @@ function plot_scatter(panel_titles, time, x, ys; unit, title, fname, xname = "Mo
     cb_dates = DateTime(2022, 9, 1):Day(15):model_time[end]
     Colorbar(fig[1:length(ys), length(panel_titles) + 1]; colormap = :viridis, limits = crange, label = "Date (2022)",
         ticks = (tday(cb_dates), Dates.format.(cb_dates, "mm/dd")))
-    Label(fig[0, :], title, fontsize = 18, tellwidth = false)
+    Label(fig[0, :], title, fontsize = 13, tellwidth = false)
     outname = joinpath(figure_path, fname)
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved ", outname)
     return fig
 end
@@ -628,7 +628,7 @@ end
 # --- where the mooring CTDs were: pressure and depth of each instrument through time ---
 # Both come straight from the CTD file ("pression" and "depth"); one line per instrument, deeper = lower.
 let
-    fig = Figure(size = (1100, 700))
+    fig = Figure(; figkw(18, 11.5)...)
     cols = Makie.wong_colors()
     axs = Axis[]
     for (row, (f, ylabel, ptitle)) in enumerate(((ctd_pres, "Pressure (dbar)", "Pressure"),
@@ -645,9 +645,9 @@ let
     hidexdecorations!(axs[1]; ticks = false, grid = false)
     axs[end].xlabel = "Date (2022)"
     Legend(fig[3, 1], axs[1]; orientation = :horizontal, framevisible = false, tellwidth = false)
-    Label(fig[0, :], "Pressure and depth of the mooring CTDs, $site", fontsize = 18, tellwidth = false)
+    Label(fig[0, :], "Pressure and depth of the mooring CTDs, $site", fontsize = 13, tellwidth = false)
     outname = joinpath(figure_path, "ctd_pressure_depth.png")
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved ", outname)
     # zooms: the x axis is already in days since the start of the model run, so the limits are just day numbers
     # for (d0, d1) in ((3, 8), (33, 38))
@@ -656,7 +656,7 @@ let
     #     end
     #     xlims!(axs[end], d0, d1)
     #     outname = joinpath(figure_path, "ctd_pressure_depth_zoom$(d0)_$(d1).png")
-    #     save(outname, fig)
+    #     figsave(outname, fig)
     #     println("saved ", outname)
     # end
     fig
@@ -667,7 +667,7 @@ end
 # instrument); all bins move together as the mooring is pulled down. Bins with no data (NaN) are simply not drawn.
 let
     nbin = size(adcp_z, 1)
-    fig = Figure(size = (1100, 500))
+    fig = Figure(; figkw(18, 8.2)...)
     ax = Axis(fig[1, 1]; ylabel = "Depth (m)", xlabel = "Date (2022)", yreversed = true, xticks = xticks,
         title = "Depth of the mooring ADCP bins, $site")
     for k in 1:nbin
@@ -676,13 +676,13 @@ let
     Colorbar(fig[1, 2]; colormap = :viridis, limits = (1, nbin), label = "Bin number (1 = deepest)")
     xlims!(ax, tday(model_time[1]), tday(model_time[end]))
     outname = joinpath(figure_path, "adcp_bin_depth.png")
-    save(outname, fig)
+    figsave(outname, fig)
     println("saved ", outname)
     # for (d0, d1) in ((3, 8), (33, 38))                 # same zooms as the CTD figure, one tick per day
     #     ax.xticks = (d0:d1, Dates.format.(t0 .+ Day.(d0:d1), "mm/dd"))
     #     xlims!(ax, d0, d1)
     #     outname = joinpath(figure_path, "adcp_bin_depth_zoom$(d0)_$(d1).png")
-    #     save(outname, fig)
+    #     figsave(outname, fig)
     #     println("saved ", outname)
     # end
     fig

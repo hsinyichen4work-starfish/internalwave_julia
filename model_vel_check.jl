@@ -116,7 +116,7 @@ end
             u_slice = slice_at_depth(z[:, :, :, t], u_east_masked[:, :, :, t], depth)
             v_slice = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], depth)
 
-            fig = Figure(size = (1400, 600))
+            fig = Figure(; figkw(18, 7.7)...)
             for (col, (field, comp_label)) in enumerate(((u_slice, "u (east)"), (v_slice, "v (north)")))
                 ax = topdown_axis3(fig[1, 2col - 1]; title = "$comp_label at $depth_label, $(str1[t])")
                 xlims!(ax, lon_lim...)
@@ -127,7 +127,7 @@ end
                 contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                          color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             end
-            save(outname, fig)
+            figsave(outname, fig)
             println("saved plot to ", outname)
         end
     end

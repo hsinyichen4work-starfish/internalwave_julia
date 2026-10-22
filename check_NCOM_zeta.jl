@@ -112,7 +112,7 @@ println("running with $(nprocs() - 1) worker processes")
         ref_lon = v.lon_lim[1] + 0.05 * (v.lon_lim[2] - v.lon_lim[1])
         ref_lat = v.lat_lim[1] + 0.025 * (v.lat_lim[2] - v.lat_lim[1])
         arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; v.quiver_kw...)
-        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 9,
+        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 7,
               align = (:left, :bottom), offset = (0, 4), overdraw = true)
     end
 end
@@ -176,7 +176,7 @@ end
                 continue
             end
 
-            fig = Figure(size = v.size, figure_padding = (16, 16, 40, 16))
+            fig = Figure(; figkw(18, 18 * v.size[2] / v.size[1])..., figure_padding = (11, 11, 29, 11))
             ax = topdown_axis3(fig[1, 1]; title = "NCOM SSH gradient |∇ζ|, $(str1[t])")
             ax.azimuth = -pi / 2 - 1e-4   # keeps the y ticks/label on the left side
             sp = plot_curvilinear!(ax, lon_par, lat_par, zeta_grad_masked[:, :, t] .* grad_scale;
@@ -193,7 +193,7 @@ end
             add_mooring!(ax)   # last, so the markers sit on top of the arrows
             xlims!(ax, v.lon_lim...)
             ylims!(ax, v.lat_lim...)
-            save(outname_grad, fig; px_per_unit = 3.2)
+            figsave(outname_grad, fig)
             println("saved plot to ", outname_grad)
         end
     end

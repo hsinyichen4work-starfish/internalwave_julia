@@ -133,7 +133,7 @@ function add_quiver!(ax, u, v)
     keep = .!isnan.(us) .& .!isnan.(vs)
     arrows2d!(ax, xs[keep], ys[keep], us[keep], vs[keep]; quiver_kw...)
     arrows2d!(ax, [ref_lon], [ref_lat], [ref_speed], [0.0]; quiver_kw...)
-    text!(ax, ref_lon, ref_lat; text = "$(ref_speed) m/s", fontsize = 14,
+    text!(ax, ref_lon, ref_lat; text = "$(ref_speed) m/s", fontsize = 10,
           align = (:left, :bottom), offset = (0, 6))
 end
 
@@ -185,7 +185,7 @@ function plot_field(field, u, v, title, label, cmap, outfile; colorrange = nothi
     sub = field[ilon, :][ix, iy]
     cr = something(colorrange, quantile(filter(!isnan, vec(sub)), (0.02, 0.98)))
     colorbars[splitext(basename(outfile))[1]] = Float64.(Tuple(cr))
-    fig = Figure(size = (800, 760))
+    fig = Figure(; figkw(18, 17.1)...)
     ax = Axis(fig[1, 1], title = title, xlabel = "lon", ylabel = "lat", aspect = DataAspect())
     hm = heatmap!(ax, lon180[ix], lat[iy], sub; colormap = cmap, colorrange = cr, nan_color = :gray80)
     add_quiver!(ax, u[ilon, :][ix, iy], v[ilon, :][ix, iy])
@@ -195,7 +195,7 @@ function plot_field(field, u, v, title, label, cmap, outfile; colorrange = nothi
     limits!(ax, lon_lim..., lat_lim...)
     Colorbar(fig[1, 2], hm, label = label)
     Legend(fig[2, 1:2], ax; orientation = :horizontal, framevisible = false)
-    save(outfile, fig)
+    figsave(outfile, fig)
     println("saved ", outfile)
 end
 

@@ -47,6 +47,7 @@ Run (batch: sbatch_files/julia_tidalcomp.sh):
 =#
 
 using NCDatasets, CairoMakie, Printf, Statistics, LinearAlgebra, Dates
+include("/home/hchen54/internalwave_julia/function/fig_setup.jl")   # figkw(w_cm, h_cm), figsave, cm_to_pt
 
 const dirR   = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint/"
 const fgrd   = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
@@ -79,6 +80,8 @@ const SPONGE = 27.0                          # km removed along each open bounda
 const LC_SD  = 400.0                         # km, half-power wavelength of the low-pass, semidiurnal and higher
 const LC_D   = 800.0                         # km, diurnal
 const HSHELF = 200.0                         # m, shelf / deep-water split
+const HDEEP  = 2000.0                        # m, figure 6: co-phase lines only in deeper water
+const BATHY  = [500, 1000, 2000]             # m, grey isobaths in figure 6
 const MAJOR  = ["M2", "S2", "N2", "K2", "K1", "O1", "P1", "Q1"]
 const DIURNAL = ["K1", "O1", "P1", "Q1", "J1", "OO1"]
 const MAPC   = ["M2", "S2", "K1", "O1"]
@@ -395,7 +398,6 @@ tab = String(take!(io)); print(tab); write(dirout * "ROMS_TPXO_rms$(FSUF).txt", 
 
 ## --- figures, on a regular lon/lat grid (x east, y north): fields bilinearly interpolated from the rotated
 ##     ROMS grid; the (xi, eta) of each map point come from Newton iterations on the grid's lon/lat
-cm_to_pt = 72 / 2.54
 const DLL = 0.01                                                        # deg, map grid spacing (~1.1 km)
 lonv = (floor(minimum(lonR) / DLL) * DLL):DLL:(ceil(maximum(lonR) / DLL) * DLL)
 latv = (floor(minimum(latR) / DLL) * DLL):DLL:(ceil(maximum(latR) / DLL) * DLL)
@@ -445,36 +447,36 @@ mapsuf = "ROMS Amazon 900 m ($tlab) vs $TPLAB" * (TSIG > 0 ? ", smoothed σ = $(
 
 ## figure 1: ROMS barotropic amplitude + co-phase lines, amplitude and phase differences
 mc = [c for c in MAPC if haskey(LP, c)]
-fig = Figure(size = (24cm_to_pt, (2 + 7.2length(mc))cm_to_pt), fontsize = 9)
+fig = Figure(; figkw(24, 2 + 7.2length(mc))...)
 for (row, c) in enumerate(mc)
     zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
     Ar = abs.(zr); Gr = unw(zr); Gt = unw(zt)
     dA = nanout(Ar .- abs.(zt)); dG = nanout(-rad2deg.(angle.(zr .* conj.(zt))))
     dAm = max(q(abs.(dA), 0.99), 0.05); dGm = max(q(abs.(dG), 0.99), 1.0)
     lev = (floor(minimum(Gr) / 10) * 10):10:(ceil(maximum(Gr) / 10) * 10)
-    kw = (; xlabelvisible = row == length(mc), xticklabelsvisible = row == length(mc), mapax...)
-    a1 = Axis(fig[row, 1]; title = "$c amplitude (ROMS bt) [cm], phase every 10°", ylabel = "latitude", xlabel = "longitude", kw...)
+    kw = (; xlabelvisible = row == length(mc), xticklabelsvisible = row == length(mc), mapax..., xticks = 312:4:320)
+    a1 = Axis(fig[row, 1]; title = "$c amplitude (ROMS bt) [cm]\nphase every 10°", ylabel = "latitude", xlabel = "longitude", kw...)
     h1 = heatmap!(a1, lonv, latv, rg(nanout(Ar)); colormap = :Blues, colorrange = (0, q(Ar, 0.995)))
     contour!(a1, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.7)
     contour!(a1, lonv, latv, rg(nanout(Gt)); levels = lev, color = :darkorange, linewidth = 0.7, linestyle = :dash)
     Colorbar(fig[row, 2], h1; height = Relative(0.8))
-    a2 = Axis(fig[row, 3]; title = "$c amplitude ROMS - $(TPN) [cm]", xlabel = "longitude", yticklabelsvisible = false, kw...)
+    a2 = Axis(fig[row, 3]; title = "$c amplitude\nROMS - $(TPN) [cm]", xlabel = "longitude", yticklabelsvisible = false, kw...)
     h2 = heatmap!(a2, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dAm, dAm))
     Colorbar(fig[row, 4], h2; height = Relative(0.8))
-    a3 = Axis(fig[row, 5]; title = "$c phase ROMS - $(TPN) [deg]", xlabel = "longitude", yticklabelsvisible = false, kw...)
+    a3 = Axis(fig[row, 5]; title = "$c phase\nROMS - $(TPN) [deg]", xlabel = "longitude", yticklabelsvisible = false, kw...)
     h3 = heatmap!(a3, lonv, latv, rg(dG); colormap = :balance, colorrange = (-dGm, dGm))
     Colorbar(fig[row, 6], h3; height = Relative(0.8))
     foreach(deco!, (a1, a2, a3))
 end
-Label(fig[0, 1:6], "$mapsuf\nROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)), half power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
-      "Left: co-phase lines ROMS black, $(TPN) orange dashed; thick black: $(Int(HSHELF)) m isobath; dotted box: comparison area; grey: model domain.", fontsize = 9, tellwidth = false)
+Label(fig[0, 1:6], "$mapsuf\nROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)),\nhalf power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
+      "Left: co-phase lines ROMS black, $(TPN) orange dashed; thick black: $(Int(HSHELF)) m isobath;\ndotted box: comparison area; grey: model domain.", fontsize = 13, tellwidth = false)
 colgap!(fig.layout, 6); rowgap!(fig.layout, 4)
-save(dirout * "ROMS_TPXO_maps$(FSUF).png", fig; px_per_unit = 300 / 72)
+figsave(dirout * "ROMS_TPXO_maps$(FSUF).png", fig)
 
 ## figure 2: RMS per constituent
 rows2 = [r for r in rows if r[:con] in MAJOR || r[:con] in ("M4", "MS4", "MN4")]; CB = [r[:con] * (r[:inf] ? "*" : "") for r in rows2]; nb = length(CB)
 cols = ["#2a78d6", "#eb6834", "#1baf7a"]
-fig2 = Figure(size = (17cm_to_pt, 13cm_to_pt), fontsize = 10)
+fig2 = Figure(; figkw(17, 13)...)
 ax = Axis(fig2[1, 1]; ylabel = "RMS difference [cm]", xticks = (1:nb, CB), title = "$mapsuf, comparison area",
           yscale = log10, yminorticksvisible = true, yminorgridvisible = true)
 ser = [("ROMS barotropic vs $(TPN), shelf (h < $(Int(HSHELF)) m)", :rms_sh), ("ROMS barotropic vs $(TPN), deep", :rms_dp), ("ROMS vs $(TPN), unfiltered", :rms_full)]
@@ -491,19 +493,19 @@ text!(ax2, 1:nb, rel; text = [@sprintf("%.0f", v) for v in rel], align = (:cente
 ylims!(ax2, 0, 1.25 * maximum(rel))
 Label(fig2[4, 1], "* inferred from S2 / K1 / N2 with the TPXO ratio (record too short to separate)", fontsize = 8, tellwidth = false)
 rowsize!(fig2.layout, 3, Relative(0.25))
-save(dirout * "ROMS_TPXO_rms$(FSUF).png", fig2; px_per_unit = 300 / 72)
+figsave(dirout * "ROMS_TPXO_rms$(FSUF).png", fig2)
 
 ## figure 3: ROMS coherent M2 internal-tide SSH (full - barotropic)
 zit = ZR[:, :, kc("M2")] .- LP["M2"]
-fig3 = Figure(size = (13cm_to_pt, 14cm_to_pt), fontsize = 10)
+fig3 = Figure(; figkw(13, 14)...)
 a = Axis(fig3[1, 1]; title = "ROMS coherent M2 internal-tide SSH amplitude [cm]\n(full - barotropic, $(Int(LC_SD)) km cutoff), $tlab", xlabel = "longitude", ylabel = "latitude", mapax...)
 h = heatmap!(a, lonv, latv, rg(nanout(abs.(zit))); colormap = :Blues, colorrange = (0, q(abs.(zit), 0.995)))
 deco!(a)
 Colorbar(fig3[1, 2], h)
-save(dirout * "ROMS_M2_ITssh$(FSUF).png", fig3; px_per_unit = 300 / 72)
+figsave(dirout * "ROMS_M2_ITssh$(FSUF).png", fig3)
 
 ## figure 4: 2 x 2 maps of the barotropic rms difference sqrt(|dZ|^2 / 2)
-fig4 = Figure(size = (22cm_to_pt, 24cm_to_pt), fontsize = 10)
+fig4 = Figure(; figkw(22, 24)...)
 for (n, c) in enumerate(mc)
     r = rows[findfirst(x -> x[:con] == c, rows)]
     E = nanout(abs.(LP[c] .- TP[c]) ./ sqrt(2))
@@ -515,14 +517,14 @@ for (n, c) in enumerate(mc)
     deco!(a4)
     Colorbar(fig4[row, 2col], h4; label = "rms difference [cm]", height = Relative(0.8))
 end
-Label(fig4[0, 1:4], "Barotropic tide: rms difference sqrt(|Z_ROMS - Z_$(TPN)|² / 2), $mapsuf\n" *
-      "ROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)), $(Int(LC_SD)) / $(Int(LC_D)) km; dotted box: comparison area ($(Int(SPONGE)) km sponge removed)", fontsize = 9, tellwidth = false)
+Label(fig4[0, 1:4], "Barotropic tide: rms difference sqrt(|Z_ROMS - Z_$(TPN)|² / 2),\n$mapsuf\n" *
+      "ROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)), $(Int(LC_SD)) / $(Int(LC_D)) km;\ndotted box: comparison area ($(Int(SPONGE)) km sponge removed)", fontsize = 11, tellwidth = false)
 colgap!(fig4.layout, 6); rowgap!(fig4.layout, 6)
-save(dirout * "ROMS_TPXO_rms_maps$(FSUF).png", fig4; px_per_unit = 300 / 72)
+figsave(dirout * "ROMS_TPXO_rms_maps$(FSUF).png", fig4)
 
 ## figure 5: 2 x 2 co-tidal maps, ROMS barotropic amplitude and co-phase lines of ROMS (solid, labelled)
 ##           and TPXO (dashed); phase unwrapped about the area mean, labels mod 360
-fig5 = Figure(size = (22cm_to_pt, 24cm_to_pt), fontsize = 10)
+fig5 = Figure(; figkw(22, 24)...)
 for (n, c) in enumerate(mc)
     zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
     Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
@@ -530,19 +532,19 @@ for (n, c) in enumerate(mc)
     dl = first(d for d in (1, 2, 5, 10, 15, 30) if rng / d <= 12)
     lev = (floor(minimum(Gr) / dl) * dl):dl:(ceil(maximum(Gr) / dl) * dl)
     row, col = fldmod1(n, 2)
-    a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm], Greenwich phase every $(dl)°", xlabel = "longitude", ylabel = "latitude",
+    a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm]\nGreenwich phase every $(dl)°", xlabel = "longitude", ylabel = "latitude",
               mapax..., xlabelvisible = row == 2, xticklabelsvisible = row == 2, ylabelvisible = col == 1, yticklabelsvisible = col == 1)
     h5 = heatmap!(a5, lonv, latv, rg(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
     deco!(a5; box = false)
     contour!(a5, lonv, latv, rg(Gt); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
-    contour!(a5, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 8,
+    contour!(a5, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 10,
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
     Colorbar(fig5[row, 2col], h5; label = "amplitude [cm]", height = Relative(0.8))
 end
-Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\nROMS = $(TPN) + low-pass(ROMS - $(TPN)) (black, labelled); $(TPN) co-phase lines dashed orange; thick black: $(Int(HSHELF)) m isobath",
-      fontsize = 9, tellwidth = false)
+Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\nROMS = $(TPN) + low-pass(ROMS - $(TPN)) (black, labelled);\n$(TPN) co-phase lines dashed orange; thick black: $(Int(HSHELF)) m isobath",
+      fontsize = 11, tellwidth = false)
 colgap!(fig5.layout, 6); rowgap!(fig5.layout, 6)
-save(dirout * "ROMS_TPXO_cotidal$(FSUF).png", fig5; px_per_unit = 300 / 72)
+figsave(dirout * "ROMS_TPXO_cotidal$(FSUF).png", fig5)
 
 ## figure 6: M2, (left) co-tidal map as in figure 5, (right) amplitude ROMS - TPXO (barotropic ROMS, as in figure 1)
 let c = "M2"
@@ -550,26 +552,29 @@ let c = "M2"
     Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
     dA = nanout(abs.(zr) .- abs.(zt)); dAm = max(q(abs.(dA), 0.99), 0.05)
     dAc = filter(isfinite, dA[M])                                       # comparison area
-    rng = -(reverse(quantile(vec(Gr[M]), [0.01, 0.99]))...)
-    dl = first(d for d in (1, 2, 5, 10, 15, 30) if rng / d <= 12)
-    lev = (floor(minimum(Gr) / dl) * dl):dl:(ceil(maximum(Gr) / dl) * dl)
-    fig6 = Figure(size = (22cm_to_pt, 13cm_to_pt), fontsize = 10)
-    a6 = Axis(fig6[1, 1]; title = "$c: amplitude [cm], Greenwich phase every $(dl)°", xlabel = "longitude", ylabel = "latitude", mapax...)
-    h6 = heatmap!(a6, lonv, latv, rg(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
+    D = M .& (hR .>= HDEEP); deep(X) = ifelse.(hmap .>= HDEEP, X, NaN)  # co-phase lines in deep water only
+    rng = -(reverse(quantile(vec(Gr[D]), [0.01, 0.99]))...)
+    dl = first(d for d in (1, 2, 3, 5, 10) if rng / d <= 12)
+    lev = (floor(minimum(Gr[D]) / dl) * dl):dl:(ceil(maximum(Gr[D]) / dl) * dl)
+    fig6 = Figure(; figkw(22, 13)...)
+    a6 = Axis(fig6[1, 1]; title = "$c: amplitude [cm]\nGreenwich phase every $(dl)° (h > $(Int(HDEEP)) m)", xlabel = "longitude", ylabel = "latitude", mapax...)
+    h6 = heatmap!(a6, lonv, latv, rg(Ar); colormap = Reverse(:Spectral), colorrange = (0, q(Ar, 0.999)))
+    contour!(a6, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
     deco!(a6; box = false)
-    contour!(a6, lonv, latv, rg(Gt); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
-    contour!(a6, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 8,
+    contour!(a6, lonv, latv, deep(rg(Gt)); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
+    contour!(a6, lonv, latv, deep(rg(Gr)); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 10,
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
     Colorbar(fig6[1, 2], h6; label = "amplitude [cm]", height = Relative(0.8))
     b6 = Axis(fig6[1, 3]; title = @sprintf("%s amplitude ROMS - %s [cm]\narea mean %.2f, rms %.2f cm", c, TPN, mean(dAc), sqrt(mean(abs2, dAc))),
               xlabel = "longitude", yticklabelsvisible = false, mapax...)
     k6 = heatmap!(b6, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dAm, dAm))
+    contour!(b6, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
     deco!(b6)
     Colorbar(fig6[1, 4], k6; label = "ROMS - $(TPN) amplitude [cm]", height = Relative(0.8))
     Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: ROMS co-phase lines black (labelled), $(TPN) dashed orange. " *
-          "Right: |Z_ROMS| - |Z_$(TPN)|.\nDotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath",
-          fontsize = 9, tellwidth = false)
+          "Right: |Z_ROMS| - |Z_$(TPN)|.\nDotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath; grey: $(join(BATHY, ", ")) m isobaths",
+          fontsize = 11, tellwidth = false)
     colgap!(fig6.layout, 6)
-    save(dirout * "ROMS_TPXO_M2_cotidal_dA$(FSUF).png", fig6; px_per_unit = 300 / 72)
+    figsave(dirout * "ROMS_TPXO_M2_cotidal_dA$(FSUF).png", fig6)
 end
 println("figures written to $dirout")

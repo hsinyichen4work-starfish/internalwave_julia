@@ -208,7 +208,7 @@ for boundary in boundaries
     dzeta[land, :] .= NaN
 
     zr = (min(nanq(zplot_b, 0.01), nanq(zplot_m, 0.01)), max(nanq(zplot_b, 0.99), nanq(zplot_m, 0.99)))
-    fig = Figure(size = (1300, 1000))
+    fig = Figure(; figkw(18, 13.8)...)
     for (row, (ttl, x, D, cr, cm)) in enumerate([
             ("model zeta", xm, zplot_m, zr, :viridis),
             ("bry zeta", xb, zplot_b, zr, :viridis),
@@ -219,13 +219,13 @@ for boundary in boundaries
         xlims!(ax, 0, ndays)
         Colorbar(fig[row, 2], hm, label = "m")
     end
-    Label(fig[0, :], "zeta along the whole $boundary boundary, $(start_date) – $(end_date)", fontsize = 22, font = :bold, tellwidth = false)
+    Label(fig[0, :], "zeta along the whole $boundary boundary, $(start_date) – $(end_date)", fontsize = 16, font = :bold, tellwidth = false)
     rowsize!(fig.layout, 0, Fixed(35))
     outname = figpath("zeta_hovmoller_$(boundary)", "zeta_hovmoller_$(boundary)_$(tag).png")
-    save(outname, fig); println("saved plot to ", outname)
+    figsave(outname, fig); println("saved plot to ", outname)
 
     # boundary-wide mismatch summary: where in time does it jump?
-    fig = Figure(size = (1200, 600))
+    fig = Figure(; figkw(18, 9)...)
     ax1 = Axis(fig[1, 1], ylabel = "m", title = "zeta mismatch along $boundary boundary: RMS (blue), max|·| (orange)")
     scatterlines!(ax1, xb, rms_along(dzeta), color = :blue, markersize = 6)
     scatterlines!(ax1, xb, maxabs_along(dzeta), color = :orange, markersize = 6)
@@ -237,7 +237,7 @@ for boundary in boundaries
     mark_days!(ax2, ndays)
     linkxaxes!(ax1, ax2); xlims!(ax2, 0, ndays)
     outname = figpath("zeta_mismatch_$(boundary)", "zeta_mismatch_$(boundary)_$(tag).png")
-    save(outname, fig); println("saved plot to ", outname)
+    figsave(outname, fig); println("saved plot to ", outname)
 
     # ================= temp at fixed depths =================
     N = size(temp_m, 2)
@@ -257,7 +257,7 @@ for boundary in boundaries
     # drawn twice: auto colorbar for the mismatch row (.png), then the same
     # figure with the mismatch row fixed at dT_fixed_range (_fixcb.jpg)
     for fixcb in (false, true)
-    fig = Figure(size = (1900, 1100))
+    fig = Figure(; figkw(18, 10.4)...)
     for (col, (dname, _)) in enumerate(target_depths)
         Tr = (min(nanq(Tb_d[dname], 0.01), nanq(Tm_d[dname], 0.01)), max(nanq(Tb_d[dname], 0.99), nanq(Tm_d[dname], 0.99)))
         dTr = fixcb ? dT_fixed_range : sym_range(dT_d[dname])
@@ -272,19 +272,19 @@ for boundary in boundaries
             Colorbar(fig[row, 2col], hm, label = lab)
         end
     end
-    Label(fig[0, :], "temp along the whole $boundary boundary, $(start_date) – $(end_date)", fontsize = 22, font = :bold, tellwidth = false)
+    Label(fig[0, :], "temp along the whole $boundary boundary, $(start_date) – $(end_date)", fontsize = 16, font = :bold, tellwidth = false)
     rowsize!(fig.layout, 0, Fixed(35))
     if fixcb
         outname = figpath("temp_hovmoller_$(boundary)", "temp_hovmoller_$(boundary)_$(tag)_fixcb.jpg")
         save_jpg(outname, fig)
     else
         outname = figpath("temp_hovmoller_$(boundary)", "temp_hovmoller_$(boundary)_$(tag).png")
-        save(outname, fig)
+        figsave(outname, fig)
     end
     println("saved plot to ", outname)
     end   # fixcb
 
-    fig = Figure(size = (1200, 800))
+    fig = Figure(; figkw(18, 12)...)
     for (row, (dname, _)) in enumerate(target_depths)
         ax = Axis(fig[row, 1], xlabel = row == length(target_depths) ? xlab : "", ylabel = "°C",
             title = "temp $dname mismatch along $boundary boundary: RMS (blue), max|·| (orange)")
@@ -294,7 +294,7 @@ for boundary in boundaries
         xlims!(ax, 0, ndays)
     end
     outname = figpath("temp_mismatch_$(boundary)", "temp_mismatch_$(boundary)_$(tag).png")
-    save(outname, fig); println("saved plot to ", outname)
+    figsave(outname, fig); println("saved plot to ", outname)
 
     GC.gc()
 end

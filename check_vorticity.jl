@@ -133,8 +133,8 @@ end
 
         # clim = 5 * mean(abs, filter(!isnan, vor_1m))   # symmetric color limits centered on 0
         clim = 5e-5
-        fig = Figure(size = (1800, 1000))
-        Label(fig[0, 1:3], "Relative vorticity, $(str1[t])", fontsize = 20)
+        fig = Figure(; figkw(18, 10)...)
+        Label(fig[0, 1:3], "Relative vorticity, $(str1[t])", fontsize = 14)
 
         sp = nothing   # last heatmap handle, reused for the shared Colorbar below
         for (depth, label, (row, col)) in zip(depths, depth_labels, depth_positions)
@@ -156,7 +156,7 @@ end
         end
         Colorbar(fig[1:2, 4], sp, label = "s⁻¹")
 
-        save(outname_vor, fig)
+        figsave(outname_vor, fig)
         println("saved plot to ", outname_vor)
     end
 end

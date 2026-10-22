@@ -47,10 +47,9 @@ println("running with $(nprocs() - 1) worker processes")
         return ax
     end
 
-    # every marker/arrow/label size below is given for the 800x600 canvas
-    # most plots use; the SSH gradient plot's smaller 500x425 canvas passes
-    # this as `scale` so its overlays shrink by the same ratio
-    small_scale = 500 / 800
+    # every marker/arrow/label size below is given for the 18 cm canvas; the SSH
+    # gradient plot passes this as `scale` (now also 18 cm wide, so 1)
+    small_scale = 1.0
 
     # mooring locations (lon in degrees_east, -180..180 like the grid; lat in degrees_north),
     # taken from the global attributes of mooring_file, e.g.
@@ -96,7 +95,7 @@ println("running with $(nprocs() - 1) worker processes")
     function add_quiver!(ax, u_east, v_north; scale = 1)
         quiver_curvilinear!(ax, lon_rho, lat_rho, u_east, v_north; skip = skip, quiver_kw(scale)...)
         arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; quiver_kw(scale)...)
-        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 14 * scale,
+        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 10 * scale,
               align = (:left, :bottom), offset = (0, 6 * scale), overdraw = true)
     end
 
@@ -244,7 +243,7 @@ end
         if isfile(outname_zeta)
             println("already exists, skipping: ", outname_zeta)
         else
-            fig = Figure(size = (800, 600))
+            fig = Figure(; figkw(18, 13.5)...)
             ax = map_axis(fig[1, 1]; title = "Sea surface height (zeta), $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, zeta_masked[:, :, t];
                                     colormap = Reverse(:RdBu), colorrange = (-1, 1))
@@ -252,7 +251,7 @@ end
             contour!(ax, lon_rho, lat_rho, h; levels = bathy_levels,
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             add_mooring!(ax)
-            save(outname_zeta, fig)
+            figsave(outname_zeta, fig)
             println("saved plot to ", outname_zeta)
         end
  
@@ -267,7 +266,7 @@ end
             temp_1m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -1.0)
             temp_100m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -100.0)
  
-            fig = Figure(size = (1400, 600))
+            fig = Figure(; figkw(18, 7.7)...)
             for (col, (field, depth_label, crange)) in enumerate(((temp_1m, "1 m", (24, 30)), (temp_100m, "100 m", (15, 30))))
                 ax = map_axis(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
                 sp = plot_curvilinear!(ax, lon_rho, lat_rho, field; colormap = :thermal, colorrange = crange)
@@ -276,7 +275,7 @@ end
                          color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
                 add_mooring!(ax)
             end
-            save(outname_temp, fig)
+            figsave(outname_temp, fig)
             println("saved plot to ", outname_temp)
         end
  
@@ -289,7 +288,7 @@ end
             u_east_1m = slice_at_depth(z[:, :, :, t], u_east_masked[:, :, :, t], -1.0)
             v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
  
-            fig = Figure(size = (800, 600))
+            fig = Figure(; figkw(18, 13.5)...)
             ax = map_axis(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, speed_1m; colormap = :speed, colorrange = (0, 2))
             Colorbar(fig[1, 2], sp, label = "m/s")
@@ -297,7 +296,7 @@ end
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             add_quiver!(ax, u_east_1m, v_north_1m)
             add_mooring!(ax)
-            save(outname_speed, fig)
+            figsave(outname_speed, fig)
             println("saved plot to ", outname_speed)
         end
  
@@ -316,7 +315,7 @@ end
  
             # clim = 5 * mean(abs, filter(!isnan, vor_1m))   # symmetric color limits centered on 0
             clim = 5e-5;
-            fig = Figure(size = (800, 600))
+            fig = Figure(; figkw(18, 13.5)...)
             ax = map_axis(fig[1, 1]; title = "Relative vorticity, surface, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_psi, lat_psi, vor_1m;
                                     colormap = Reverse(:RdBu), colorrange = (-clim, clim))
@@ -325,7 +324,7 @@ end
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             add_quiver!(ax, u_east_1m, v_north_1m)
             add_mooring!(ax)
-            save(outname_vor, fig)
+            figsave(outname_vor, fig)
             println("saved plot to ", outname_vor)
         end
  
@@ -340,7 +339,7 @@ end
  
             # small canvas = relatively larger text; the extra bottom padding
             # (left, right, bottom, top) keeps the "Longitude" label from being cut off
-            fig = Figure(size = (500, 425), figure_padding = (16, 16, 40, 16))
+            fig = Figure(; figkw(18, 15.3)..., figure_padding = (11, 11, 29, 11))
             ax = map_axis(fig[1, 1]; title = "SSH gradient magnitude |∇ζ|, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, zeta_grad_masked[:, :, t] .* grad_scale;
                                     colormap = :amp, colorrange = grad_range)
@@ -349,7 +348,7 @@ end
                      color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
             add_quiver!(ax, u_east_1m, v_north_1m; scale = small_scale)
             add_mooring!(ax; scale = small_scale)
-            save(outname_grad, fig; px_per_unit = 3.2)   # 1600x1360 pixels, same sharpness as the 800x600 plots
+            figsave(outname_grad, fig)
             println("saved plot to ", outname_grad)
         end
     end

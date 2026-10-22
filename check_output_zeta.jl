@@ -85,8 +85,7 @@ println("running with $(nprocs() - 1) worker processes")
 
     skip = 40   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
     # lengthscale = degrees of lon/lat drawn per 1 m/s. arrow sizes are scaled
-    # down from check_output_parallel.jl's (800x600 canvas) to suit the
-    # smaller 500x425 one used here
+    # down from check_output_parallel.jl's for the SSH gradient plot
     quiver_kw = (lengthscale = 0.25, color = :black, shaftwidth = 1, tipwidth = 3.5, tiplength = 4)
 
     # reference arrow for the quiver scale, in the empty lower-right corner
@@ -96,7 +95,7 @@ println("running with $(nprocs() - 1) worker processes")
     ref_lat = lat_lim[1] + 0.07 * (lat_lim[2] - lat_lim[1])
     function add_quiver_key!(ax)
         arrows2d!(ax, [ref_lon], [ref_lat], [0.0], [ref_speed], [0.0], [0.0]; quiver_kw...)
-        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 9,
+        text!(ax, Point3f(ref_lon, ref_lat, 0); text = "$(ref_speed) m/s", fontsize = 7,
               align = (:left, :bottom), offset = (0, 4), overdraw = true)
     end
 
@@ -171,7 +170,7 @@ end
         else
             # small canvas = relatively larger text; the extra bottom padding
             # (left, right, bottom, top) keeps the "Longitude" label from being cut off
-            fig = Figure(size = (500, 425), figure_padding = (16, 16, 40, 16))
+            fig = Figure(; figkw(18, 15.3)..., figure_padding = (11, 11, 29, 11))
             ax = topdown_axis3(fig[1, 1]; title = "SSH gradient magnitude |∇ζ|, $(str1[t])")
             # Axis3 puts the y ticks/label on whichever side faces the camera;
             # at exactly -pi/2 that lands on the right, and this tiny nudge
@@ -188,7 +187,7 @@ end
                                  skip = skip, quiver_kw...)
             add_quiver_key!(ax)
             add_mooring!(ax)   # last, so the markers sit on top of the arrows
-            save(outname_grad, fig; px_per_unit = 3.2)   # 1600x1360 pixels, so the movie stays as sharp as before
+            figsave(outname_grad, fig)
             println("saved plot to ", outname_grad)
         end
     end
