@@ -1092,6 +1092,45 @@ plot_time_depth((
     title = "Envelope of the $(round(Int, T_hp)) h high-passed KE ($(round(Int, T_kenv)) h low-pass) at the $site",
     fname = "ke_hp_envelope$(round(Int, T_kenv))h_time_depth.png")
 
+# the two KE figures above side by side for print (18 cm wide, 10 pt): left = low-passed KE, right = envelope of the
+# high-passed KE; rows = mooring / ROMS / NCOM. Each column keeps its own colour scale, with a colorbar underneath.
+let zg = zlim_uvf[1]:2.0:zlim_uvf[2],
+    ticks2 = DateTime(2022, 9, 1):Day(15):model_time[end],          # sparser dates: the columns are only ~8 cm wide
+    xt = (tday(ticks2), Dates.format.(ticks2, "mm/dd")),
+    rows = (("Mooring ADCP", :mooring), ("ROMS 900 m", :roms), ("NCOM", :ncom)),
+    cols = (("$(round(Int, T_lp)) h low-passed KE", s -> getproperty(ke, s).lp, 1.0, "KE (m²/s²)"),
+            ("Envelope of the $(round(Int, T_hp)) h high-passed KE", s -> getproperty(ke_hp_env, s), ke_env_max,
+             "KE envelope (m²/s²)"))
+
+    fig = Figure(; figkw(18, 16)..., figure_padding = (4, 10, 4, 4))
+    axs = Matrix{Axis}(undef, length(rows), length(cols))
+    for (c, (ctitle, field, kmax, cblabel)) in enumerate(cols)
+        local hm
+        for (r, (rtitle, src)) in enumerate(rows)
+            s = getproperty(ke, src)
+            ax = Axis(fig[r, c]; title = "($('a' + (r - 1) * length(cols) + c - 1)) $rtitle", titlealign = :left,
+                ylabel = c == 1 ? "Depth (m)" : "", yreversed = true, xticks = xt,
+                xgridvisible = false, ygridvisible = false)
+            hm = heatmap!(ax, tday(s.time), zg, to_zgrid(s.z, field(src), zg)'; colormap = :amp, colorrange = (0, kmax))
+            axs[r, c] = ax
+        end
+        Label(fig[0, c], ctitle; font = :bold, tellwidth = false)
+        Colorbar(fig[length(rows)+1, c], hm; label = cblabel, vertical = false, flipaxis = false,
+            ticks = Float32.(range(0, kmax; length = 5)), width = Relative(0.8))   # Float32: the colour range is stored as Float32, so a Float64 end tick (0.02) falls just outside it and is dropped
+    end
+    linkaxes!(axs...)
+    xlims!(axs[end], tday(model_time[1]), tday(model_time[end]))
+    ylims!(axs[end], zlim_uvf[2], zlim_uvf[1])
+    hidexdecorations!.(axs[1:end-1, :]; ticks = false)
+    hideydecorations!.(axs[:, 2:end]; ticks = false)
+    for ax in axs[end, :]; ax.xlabel = "Date (2022)"; end
+    colgap!(fig.layout, 10)
+    rowgap!(fig.layout, 6)
+    outname = joinpath(figure_path, "ke_lp_and_hp_envelope_time_depth.png")
+    figsave(outname, fig)
+    println("saved ", outname)
+end
+
 
 ##
 ##
