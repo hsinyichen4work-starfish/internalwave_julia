@@ -18,6 +18,7 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
+    mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
     datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
     figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/energy_flux"   # separate from his_rejoint so the two scripts' skip checks don't interfere
     nc_dum_save = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/energyflux_dum"
@@ -26,6 +27,36 @@ println("running with $(nprocs() - 1) worker processes")
 
     mask_rho, lon_rho, lat_rho, h, grid_angle = NCDataset(grid_fname) do ds
         ds["mask_rho"][:, :], ds["lon_rho"][:, :], ds["lat_rho"][:, :], ds["h"][:, :], ds["angle"][:, :]
+    end
+    lon_rho[lon_rho .> 180] .-= 360   # convert 0-360 convention to -180/180 (east/west hemisphere), same as the moorings
+
+    # mooring locations (lon in degrees_east, -180..180 like the grid; lat in degrees_north),
+    # taken from the global attributes of mooring_file, e.g.
+    #   :M1_mor_info = "indices for M1_mor in roms_grd_900m.nc , location:(-45.4802;2.5415)"
+    # (the *_mor variables themselves hold fractional grid indices, not lon/lat)
+    moor_name, moor_lon, moor_lat = NCDataset(mooring_file) do ds
+        names = [replace(v, "_mor" => "") for v in keys(ds) if endswith(v, "_mor")]
+        locs  = [match(r"location:\(([-\d.]+);([-\d.]+)\)", ds.attrib["$(n)_mor_info"]) for n in names]
+        names, [parse(Float64, m[1]) for m in locs], [parse(Float64, m[2]) for m in locs]
+    end
+    moor_group = [replace(n, r"\d+$" => "") for n in moor_name]   # "M3" -> "M", "CPIES7" -> "CPIES"
+
+    # one marker style per mooring type, so the three arrays can be told apart
+    moor_style = Dict("french" => (marker = :star5,   markersize = 11, color = :magenta),
+                      "M"      => (marker = :diamond, markersize = 7,  color = :cyan),
+                      "CPIES"  => (marker = :circle,  markersize = 6,  color = :yellow))
+
+    # marks every mooring on the map; z = 0 puts them on the same flat plane as
+    # plot_curvilinear!'s surface, and overdraw keeps them from being hidden
+    # behind that surface.
+    function add_mooring!(ax)
+        for g in unique(moor_group)
+            k = findall(==(g), moor_group)
+            st = get(moor_style, g, (marker = :rect, markersize = 6, color = :white))
+            scatter!(ax, Point3f.(moor_lon[k], moor_lat[k], 0);
+                     marker = st.marker, markersize = st.markersize, color = st.color,
+                     strokecolor = :black, strokewidth = 0.75, overdraw = true)
+        end
     end
 
     # (1) which pieces are there. File names are energyflux_w<window>_tile_<ix>_<iy>.nc, one per tile and time window
@@ -139,6 +170,7 @@ println("running with $(nprocs() - 1) worker processes")
             for (n, (title, data, colormap, colorrange)) in enumerate(fields)
                 ax = topdown_axis3(fig[1, 2n-1]; title = title, ylabel = n == 1 ? "Latitude" : "")
                 hm = plot_curvilinear!(ax, sub(lon_rho), sub(lat_rho), sub(data); colormap = colormap, colorrange = colorrange)
+                add_mooring!(ax)
                 Colorbar(fig[1, 2n], hm, label = "kW m⁻¹")
             end
             Label(fig[0, :], "baroclinic energy flux, $b ($(band_info[b]))   $(Dates.format(target, "yyyy-mm-dd HH:MM"))", fontsize = 18)
@@ -187,7 +219,7 @@ all_dates = reduce(vcat, [NCDataset(joinpath(nc_dum_save, piece_files[findfirst(
                           end for iw in 1:nwindow])
 println("plotting $(length(all_dates)) time steps x $(length(band_info)) bands into ", join(frame_dir.(sort(collect(keys(band_info)))), ", "))
 @time pmap(all_dates; on_error = ex -> println("a time step failed: ", ex)) do target
-    plot_time(target)
+    plot_time(target; overwrite = true)   # redraw the frames saved before the moorings were added
     nothing   # don't send the figures back to the main process
 end
 
@@ -233,6 +265,7 @@ for b in sort(collect(keys(band_info)))
     for (n, (title, data, colormap, colorrange)) in enumerate(fields_mean)
         ax = topdown_axis3(fig_mean[1, 2n-1]; title = title, ylabel = n == 1 ? "Latitude" : "")
         hm = plot_curvilinear!(ax, lon_rho, lat_rho, data; colormap = colormap, colorrange = colorrange)
+        add_mooring!(ax)
         Colorbar(fig_mean[1, 2n], hm, label = "kW m⁻¹")
     end
     Label(fig_mean[0, :], "baroclinic energy flux, $b ($(band_info[b])), mean of $(Dates.format(mean_start, "yyyy-mm-dd HH:MM")) -> " *
@@ -241,6 +274,21 @@ for b in sort(collect(keys(band_info)))
     save(mean_fname, fig_mean)
     println("saved ", mean_fname)
     isinteractive() && display(fig_mean)
+end
+
+##
+# |mean F| on its own, one figure per band, saved in figure_path
+for b in sort(collect(keys(band_info)))
+    fig_mag = Figure(size = (700, 600))
+    ax = topdown_axis3(fig_mag[1, 1]; title = "|mean F|, $b ($(band_info[b]))\n" *
+                       "$(Dates.format(mean_start, "yyyy-mm-dd HH:MM")) -> $(Dates.format(mean_end, "yyyy-mm-dd HH:MM"))  ($nmean hourly records)")
+    hm = plot_curvilinear!(ax, lon_rho, lat_rho, F_mag_mean[b]; colormap = Reverse(:Spectral), colorrange = (0, mean_lim))
+    add_mooring!(ax)
+    Colorbar(fig_mag[1, 2], hm, label = "kW m⁻¹")
+    mag_fname = joinpath(figure_path, "energyflux_mean_mag_$(b)_$(Dates.format(mean_start, "yyyymmdd"))_$(Dates.format(mean_end, "yyyymmdd")).png")
+    save(mag_fname, fig_mag)
+    println("saved ", mag_fname)
+    isinteractive() && display(fig_mag)
 end
 
 # ##

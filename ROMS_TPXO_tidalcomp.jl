@@ -75,7 +75,7 @@ const SPINUP = 3.0                           # days dropped at the start of the 
 const FIT    = TEST ? ["m2", "s2", "n2", "k1", "o1"] :
                ["m2", "s2", "n2", "2n2", "k1", "o1", "q1", "l2", "j1", "oo1", "m4", "ms4", "mn4"]
 const INFER  = TEST ? Tuple{String, String}[] : [("k2", "s2"), ("p1", "k1"), ("nu2", "n2")]   # (inferred, from)
-const SPONGE = 30.0                          # km removed along each open boundary (check the run's sponge width)
+const SPONGE = 27.0                          # km removed along each open boundary (check the run's sponge width)
 const LC_SD  = 400.0                         # km, half-power wavelength of the low-pass, semidiurnal and higher
 const LC_D   = 800.0                         # km, diurnal
 const HSHELF = 200.0                         # m, shelf / deep-water split
@@ -543,4 +543,33 @@ Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\nROMS = $(TPN) + low-pass
       fontsize = 9, tellwidth = false)
 colgap!(fig5.layout, 6); rowgap!(fig5.layout, 6)
 save(dirout * "ROMS_TPXO_cotidal$(FSUF).png", fig5; px_per_unit = 300 / 72)
+
+## figure 6: M2, (left) co-tidal map as in figure 5, (right) amplitude ROMS - TPXO (barotropic ROMS, as in figure 1)
+let c = "M2"
+    zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
+    Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
+    dA = nanout(abs.(zr) .- abs.(zt)); dAm = max(q(abs.(dA), 0.99), 0.05)
+    dAc = filter(isfinite, dA[M])                                       # comparison area
+    rng = -(reverse(quantile(vec(Gr[M]), [0.01, 0.99]))...)
+    dl = first(d for d in (1, 2, 5, 10, 15, 30) if rng / d <= 12)
+    lev = (floor(minimum(Gr) / dl) * dl):dl:(ceil(maximum(Gr) / dl) * dl)
+    fig6 = Figure(size = (22cm_to_pt, 13cm_to_pt), fontsize = 10)
+    a6 = Axis(fig6[1, 1]; title = "$c: amplitude [cm], Greenwich phase every $(dl)°", xlabel = "longitude", ylabel = "latitude", mapax...)
+    h6 = heatmap!(a6, lonv, latv, rg(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
+    deco!(a6; box = false)
+    contour!(a6, lonv, latv, rg(Gt); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
+    contour!(a6, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 8,
+             labelformatter = l -> string.(round.(Int, mod.(l, 360))))
+    Colorbar(fig6[1, 2], h6; label = "amplitude [cm]", height = Relative(0.8))
+    b6 = Axis(fig6[1, 3]; title = @sprintf("%s amplitude ROMS - %s [cm]\narea mean %.2f, rms %.2f cm", c, TPN, mean(dAc), sqrt(mean(abs2, dAc))),
+              xlabel = "longitude", yticklabelsvisible = false, mapax...)
+    k6 = heatmap!(b6, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dAm, dAm))
+    deco!(b6)
+    Colorbar(fig6[1, 4], k6; label = "ROMS - $(TPN) amplitude [cm]", height = Relative(0.8))
+    Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: ROMS co-phase lines black (labelled), $(TPN) dashed orange. " *
+          "Right: |Z_ROMS| - |Z_$(TPN)|.\nDotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath",
+          fontsize = 9, tellwidth = false)
+    colgap!(fig6.layout, 6)
+    save(dirout * "ROMS_TPXO_M2_cotidal_dA$(FSUF).png", fig6; px_per_unit = 300 / 72)
+end
 println("figures written to $dirout")

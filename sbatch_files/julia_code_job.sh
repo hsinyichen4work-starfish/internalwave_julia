@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=runcode
+#SBATCH --job-name=n2runcode
 #SBATCH --account=uso102
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=136G
-#SBATCH --time=10:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=64G
+#SBATCH --time=03:00:00
 #SBATCH --output=runcode_%j.out
 #SBATCH --error=runcode_%j.err
 #SBATCH --mail-user=HsinYi.Chen@usm.edu
@@ -15,5 +15,5 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia --project=. model_samegrid_comp.jl 2>&1 | tee log_files/bry_model_comp.log
+julia --project=. ROMS_TPXO_tidalcomp.jl 2>&1 | tee log_files/co-tidal.log
  # adjust to wherever you keep the script
