@@ -3,7 +3,9 @@
 # make_run_folder.jl for the 2700 m CMEMS test run: same template
 # (/home/hchen54/myrun/example/), inputs from input_cmems/ instead of input/:
 #   grid  roms_cmems_grd_2700m.nc            ini  roms_ini_2700m2022082400.nc (CMEMS)
-#   bry   roms_bry_2700m_<date>.nc (CMEMS)   frc  roms_cmems_frc_2700m_<date>.nc (NCOM/NAVGEM)
+#   bry   roms_bry_2700m_<date>.nc (CMEMS)
+#   frc   frc_era5/roms_era5_frc_2700m_<date>.nc (ERA5)  or  frc/roms_cmems_frc_2700m_<date>.nc (NCOM/NAVGEM),
+#         chosen with `forcing` below; both are partitioned into frc_<TAG_USE>/
 #   tide  roms_tide_2700m_TPXO10v2.nc (TPXO10 atlas v2, 10 constituents)
 # On top of the template it
 #   - turns the tides on: tides.opt (ntides = 10, bry_tides, pot_tides) in the
@@ -16,7 +18,10 @@
 include("/home/hchen54/internalwave_julia/make_run_folder/folder_make.jl")
 
 ##
-title = "Amazon shelf internal wave simulation - 2700m CMEMS test, NCOM forcing, TPXO10 tides, pure orlanski"
+forcing = "era5"   # "era5": frc_era5/roms_era5_frc_2700m_* (era5_frc_make.py); "ncom": frc/roms_cmems_frc_2700m_* (NCOM/NAVGEM)
+frc_src = Dict("era5" => (folder = "frc_era5", prefix = "roms_era5_frc_2700m", label = "ERA5"),
+               "ncom" => (folder = "frc", prefix = "roms_cmems_frc_2700m", label = "NCOM"))[forcing]
+title = "Amazon shelf internal wave simulation - 2700m CMEMS test, $(frc_src.label) forcing, TPXO10 tides, pure orlanski"
 fold_name = "amazon_2700m_cmems_test"
 TAG_USE = "2700m_cmems"
 dyn_bry = false   # no dynamic boundary flux files for CMEMS -> pure Orlanski
@@ -37,8 +42,8 @@ input_filenames = (grd = "roms_cmems_grd_2700m",
                    ini = "roms_ini_2700m2022082400",
                    bry = "roms_bry_2700m",
                    dbry = "roms_dbry_flux_2700m",   # unused (dyn_bry = false)
-                   frc = "roms_cmems_frc_2700m")
-input_folder = (grd = "grid", ini = "ini", bry = "bry", frc = "frc")
+                   frc = frc_src.prefix)
+input_folder = (grd = "grid", ini = "ini", bry = "bry", frc = frc_src.folder)
 tide_folder = "tide"; tide_file = "roms_tide_2700m_TPXO10v2"
 ntides = 10
 filename = "amazon_2700m_cmems.in"
