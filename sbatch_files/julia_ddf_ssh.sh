@@ -15,4 +15,4 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia --project=. DDF_on_ssh.jl 2>&1 | tee log_files/ddf_ssh.log
+julia --project=. DFF/DDF_on_ssh.jl 2>&1 | tee log_files/ddf_ssh.log

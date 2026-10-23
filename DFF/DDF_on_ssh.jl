@@ -51,6 +51,37 @@ zeta .= ifelse.(mask_rho .== 0, NaN32, zeta)   # land -> NaN (in place; mask bro
 println("zeta: size $(size(zeta)), dt = $(dt[1] / 3600) h, ", date[1], " -> ", date[end])
 
 # ============================================================================
+# (1b) save the raw ssh with lon / lat / time to its own NetCDF file (for sharing; independent of the DDF below)
+# ============================================================================
+# Full 686 x 856 grid as in the ROMS output (no trimming), land = NaN. Set save_ssh = false to skip on re-runs.
+save_ssh = false
+ssh_fname = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/ddf_ssh/roms_ssh_hourly.nc"
+
+if save_ssh
+    mkpath(dirname(ssh_fname))
+    isfile(ssh_fname) && rm(ssh_fname)
+    NCDataset(ssh_fname, "c") do ds
+        defDim(ds, "xi_rho", nx)
+        defDim(ds, "eta_rho", ny)
+        defDim(ds, "time", ntime)
+        defVar(ds, "ocean_time", date, ("time",);
+               attrib = ["long_name" => "time", "units" => "seconds since 1994-01-01 00:00:00", "calendar" => "standard"])
+        defVar(ds, "lon_rho", lon_rho, ("xi_rho", "eta_rho"); attrib = ["long_name" => "longitude", "units" => "degree_east"])
+        defVar(ds, "lat_rho", lat_rho, ("xi_rho", "eta_rho"); attrib = ["long_name" => "latitude", "units" => "degree_north"])
+        defVar(ds, "mask_rho", mask_rho, ("xi_rho", "eta_rho"); attrib = ["long_name" => "1 = ocean, 0 = land"])
+        defVar(ds, "h", h, ("xi_rho", "eta_rho"); attrib = ["long_name" => "bathymetry (positive down)", "units" => "meter"])
+        defVar(ds, "zeta", zeta, ("xi_rho", "eta_rho", "time");
+               chunksizes = [nx, ny, 1], deflatelevel = 1, shuffle = true, fillvalue = NaN32,   # one snapshot per chunk, light compression
+               attrib = ["long_name" => "free-surface elevation (sea surface height)", "units" => "meter"])
+        ds.attrib["title"] = "Hourly ROMS sea surface height, Amazon 900 m run"
+        ds.attrib["source_dir"] = datadir
+        ds.attrib["grid"] = grid_fname
+        ds.attrib["note"] = "zeta as saved in roms_his.*.nc, concatenated in time; longitude converted to -180..180"
+    end
+    println("wrote $ssh_fname ($(round(filesize(ssh_fname) / 1e9, digits = 2)) GB)")
+end
+
+# ============================================================================
 # (2) build the DFF input var[x, y, t] and make sure it has no NaN
 # ============================================================================
 # The FFT mixes every point with every other point: one NaN anywhere turns the whole spectrum into NaN.
@@ -69,13 +100,42 @@ nan_ocean = count(isnan, @view zeta_f[mask_rho[1:nx_f, 1:ny_f] .== 1, :])
 println("NaN before filling: $nan_land on land, $nan_ocean over ocean")
 nan_ocean == 0 || @warn "NaN over the ocean — check those records before filtering"
 
-var = zeta[1:nx_f, 1:ny_f, :]   # a copy, so zeta keeps its NaN land for plotting
+var = zeta[1:nx_f, 1:ny_f, :]   # a copy (trimmed to odd sizes); zeta is freed below
 replace!(var, NaN32 => 0f0)
 land_mask = mask_rho[1:nx_f, 1:ny_f]
 
 any(!isfinite, var) && error("var still has NaN/Inf after filling land with 0")
 println("var: size $(size(var)) (nx, ny odd: $(isodd(nx_f)), $(isodd(ny_f))), no NaN/Inf, ",
         "range $(extrema(var)) m")
+
+# ============================================================================
+# (2b) remove a fitted plane a + b·i + c·j from every snapshot (ocean points) before the FFT
+# ============================================================================
+# The FFT treats the domain as periodic, but the barotropic tide is not: its ssh on one edge does not match the
+# opposite edge, and that jump leaks barotropic energy into every wavenumber, including the internal-tide ones
+# (tens of cm to metres of barotropic ssh vs a few cm of internal-tide ssh). The best-fit plane takes out the
+# spatial mean and the large-scale tilt, most of that mismatch. A plane has no travel direction, so it is kept
+# aside and saved, not split north/south:   var (trimmed zeta) = ssh_north + ssh_south + plane
+# (apart from the Nyquist term, see step 3). With the mean removed, k = 0 is ~0 and no longer lands in "north".
+ocean = land_mask .== 1
+A = Float64[ones(count(ocean)) [i for i in 1:nx_f, j in 1:ny_f][ocean] [j for i in 1:nx_f, j in 1:ny_f][ocean]]
+AtA_inv = inv(A' * A)   # 3 x 3, the same for every snapshot
+plane_coef = zeros(3, size(var, 3))   # a [m], b [m per xi point], c [m per eta point] for each time
+for t in 1:size(var, 3)
+    z = @view var[:, :, t]
+    a, b, c = AtA_inv * (A' * z[ocean])
+    plane_coef[:, t] .= (a, b, c)
+    z .-= ifelse.(ocean, Float32.(a .+ b .* (1:nx_f) .+ c .* (1:ny_f)'), 0f0)   # land stays 0
+end
+plane_range = extrema(plane_coef[1, :])
+println("plane removed: mean ssh $(round.(plane_range, digits = 3)) m, tilt across the domain up to ",
+        "$(round(maximum(abs.(plane_coef[2, :]) .* nx_f .+ abs.(plane_coef[3, :]) .* ny_f), digits = 3)) m; ",
+        "var range now $(extrema(var)) m")
+
+# zeta is not used after this (it was saved in 1b); free it — ~5.5 GB for the full run.
+# zeta_f is a view into zeta, so it has to go too or zeta stays in memory.
+zeta = nothing; zeta_f = nothing
+GC.gc()
 
 
 ## DO TIME FFT
@@ -111,7 +171,8 @@ println("var_t: size $(size(var_t)), frequency 0 -> $(round(freq_cph[end], digit
 ix, iy = cld(nx_f, 2), cld(ny_f, 2)
 back = real(ifft([var_t[ix, iy, :]; zeros(ComplexF32, nt - nf)]))
 nyq = iseven(nt) ? real(fft(var[ix, iy, :])[nt÷2+1]) / nt .* (-1) .^ (0:nt-1) : zeros(nt)
-println("round-trip check at (xi, eta) = ($ix, $iy): max |error| = $(maximum(abs, back .- (var[ix, iy, :] .- nyq))) m, ",
+var_pt = var[ix, iy, :]   # keep this one time series for the north + south check in step 6
+println("round-trip check at (xi, eta) = ($ix, $iy): max |error| = $(maximum(abs, back .- (var_pt .- nyq))) m, ",
         "dropped Nyquist part = $(maximum(abs, nyq)) m")
 
 # ============================================================================
@@ -128,6 +189,8 @@ var_t_check = var_t[:, :, 2]   # keep one slice to check the transform below
 fft!(var_t, (1, 2))
 var_xy = fftshift(var_t, (1, 2))   # ComplexF32 [kx, ky, frequency]
 var_t = nothing   # var_xy is the shifted copy; free the unshifted one
+var = nothing     # var is not needed after the time FFT (var_pt keeps the one point step 6 checks); ~5.5 GB
+GC.gc()
 
 println("var_xy: size $(size(var_xy)), k = 0 at index ($(cld(nx_f, 2)), $(cld(ny_f, 2)))")
 
@@ -235,6 +298,7 @@ end
 # the real data: grid-north-going (0–180°) and grid-south-going (180–360°) ssh, all frequencies
 ssh_north = dff_sector(var_xy, 0 .<= θ .< 180, nt, land_mask)
 ssh_south = dff_sector(var_xy, 180 .<= θ .< 360, nt, land_mask)
+GC.gc()   # free dff_sector's temporary copies (~16 GB each call for the full run) before the next ones
 
 # M2 band: periods 9–15 h. A wide semidiurnal band, so it also holds N2, S2 and K2 (M2 dominates);
 # the inertial period here (~5°N) is ~140 h, well outside. Any record longer than ~2 days has frequencies in it.
@@ -244,14 +308,56 @@ fkeep_M2 = fband_M2[1] .<= freq_cph .<= fband_M2[2]
 println("M2 band $(T_M2_band[1])–$(T_M2_band[2]) h ($(round.(fband_M2, digits = 4)) cph) keeps $(count(fkeep_M2)) frequencies")
 count(fkeep_M2) == 0 && @warn "no frequency falls in the M2 band — the record is too short; ssh_*_M2 will be all zero"
 
-ssh_north_M2 = dff_sector(var_xy, 0 .<= θ .< 180, nt, land_mask; fkeep = fkeep_M2)
-ssh_south_M2 = dff_sector(var_xy, 180 .<= θ .< 360, nt, land_mask; fkeep = fkeep_M2)
+# M2 outputs only: also drop wavelengths longer than 3λ1 (|k| < kcut). The barotropic tide is hundreds to thousands
+# of km long, so what the plane in 2b left of it sits at the smallest |k|; mode-1 internal tides (λ1) are kept.
+# The domain is only ~5λ1 across, so this removes just k = 0 and the lowest few harmonics.
+# The all-frequency outputs keep every |k|, so ssh_north + ssh_south + plane still add back to var.
+# Caveat: on the shallow inner shelf the barotropic tide itself is short (√(g h)·12.42 h ≈ 440 km at 10 m depth,
+# ≈ 310 km at 5 m), so some of it can pass the cut there.
+dx_m = mean(1 ./ pm)   # grid spacing [m] (≈ 900; dx ≈ dy on this grid)
+λ1 = 120e3             # mode-1 M2 wavelength [m] — placeholder; check against the |k| spectrum in DFF_ploting.jl
+kcut = 2π / (3λ1 / dx_m)   # [rad per grid point]: keep wavelengths shorter than 3λ1
+kmag = sqrt.(kx .^ 2 .+ (ky') .^ 2)   # |k| [rad per grid point], same layout as θ
+println("M2 wavenumber cut: λ1 = $(λ1 / 1e3) km, keep wavelengths < $(3λ1 / 1e3) km; ",
+        "removes $(count(kmag .<= kcut)) of $(length(kmag)) wavenumbers")
 
-# north + south must give back var, apart from the Nyquist term dropped in step 3 (removed here as before)
-resid = ssh_north[ix, iy, :] .+ ssh_south[ix, iy, :] .- (var[ix, iy, :] .- nyq)
+ssh_north_M2 = dff_sector(var_xy, (0 .<= θ .< 180) .& (kmag .> kcut), nt, land_mask; fkeep = fkeep_M2)
+ssh_south_M2 = dff_sector(var_xy, (180 .<= θ .< 360) .& (kmag .> kcut), nt, land_mask; fkeep = fkeep_M2)
+GC.gc()
+
+# all frequencies with the same wavelength cut: an approximate baroclinic (bc) ssh. Not a true barotropic/baroclinic
+# split — on the shallow shelf the barotropic tide is short enough to pass the cut, and anything else longer than 3λ1
+# (e.g. large eddies, basin-scale subtidal signal) is removed too. Time-mean and very low frequency features have no
+# clear travel direction, so they split between north and south.
+ssh_north_bc = dff_sector(var_xy, (0 .<= θ .< 180) .& (kmag .> kcut), nt, land_mask)
+ssh_south_bc = dff_sector(var_xy, (180 .<= θ .< 360) .& (kmag .> kcut), nt, land_mask)
+
+# M2-band ssh variance against |k| (before the cut), north and south sectors, for choosing λ1 and kcut.
+# Parseval with the one-sided doubled spectrum: mean variance over (x, y, t) = Σ |X|² / (2 (nx ny nt)²),
+# so each bin holds the M2 ssh variance [m²] from that |k| ring; the bins add up to the total M2 variance.
+dk = 2π / max(nx_f, ny_f)   # bin width = the coarser FFT wavenumber step
+kbin = floor.(Int, kmag ./ dk) .+ 1
+nkbin = maximum(kbin)
+P = zeros(nx_f, ny_f)
+for f in findall(fkeep_M2)
+    P .+= abs2.(@view var_xy[:, :, f])
+end
+P ./= 2 * (nx_f * ny_f * nt)^2
+spec_M2_north, spec_M2_south = zeros(nkbin), zeros(nkbin)
+for I in eachindex(P)
+    (0 <= θ[I] < 180 ? spec_M2_north : spec_M2_south)[kbin[I]] += P[I]
+end
+k_center = ((1:nkbin) .- 0.5) .* dk   # [rad per grid point]
+println("M2 |k| spectrum: $nkbin bins, width 2π/($(round(2π / dk * dx_m / 1e3, digits = 1)) km), ",
+        "total M2 variance north $(round(sum(spec_M2_north), sigdigits = 3)) m², south $(round(sum(spec_M2_south), sigdigits = 3)) m²")
+GC.gc()
+
+# north + south must give back var (plane removed), apart from the Nyquist term dropped in step 3 (removed here as before)
+resid = ssh_north[ix, iy, :] .+ ssh_south[ix, iy, :] .- (var_pt .- nyq)
 println("ssh_north, ssh_south: size $(size(ssh_north)); at (xi, eta) = ($ix, $iy) north + south vs var: ",
         "max |error| = $(maximum(abs, resid)) m; std north $(std(ssh_north[ix, iy, :])) m, south $(std(ssh_south[ix, iy, :])) m")
 println("M2 at (xi, eta) = ($ix, $iy): std north $(std(ssh_north_M2[ix, iy, :])) m, south $(std(ssh_south_M2[ix, iy, :])) m")
+println("bc at (xi, eta) = ($ix, $iy): std north $(std(ssh_north_bc[ix, iy, :])) m, south $(std(ssh_south_bc[ix, iy, :])) m")
 
 # ============================================================================
 # (7) check land is masked back, then save the four fields and the time axis to NetCDF
@@ -264,8 +370,10 @@ mkpath(out_dir)
 
 ssh_out = [("ssh_north", ssh_north, "grid-north-going ssh (wavenumber direction 0-180 deg from xi axis), all frequencies"),
            ("ssh_south", ssh_south, "grid-south-going ssh (wavenumber direction 180-360 deg from xi axis), all frequencies"),
-           ("ssh_north_M2", ssh_north_M2, "grid-north-going ssh, M2 band (periods 9-15 h) only"),
-           ("ssh_south_M2", ssh_south_M2, "grid-south-going ssh, M2 band (periods 9-15 h) only")]
+           ("ssh_north_M2", ssh_north_M2, "grid-north-going ssh, M2 band (periods 9-15 h), wavelengths < $(3λ1 / 1e3) km only"),
+           ("ssh_south_M2", ssh_south_M2, "grid-south-going ssh, M2 band (periods 9-15 h), wavelengths < $(3λ1 / 1e3) km only"),
+           ("ssh_north_bc", ssh_north_bc, "grid-north-going ssh, all frequencies, wavelengths < $(3λ1 / 1e3) km only (approximate baroclinic)"),
+           ("ssh_south_bc", ssh_south_bc, "grid-south-going ssh, all frequencies, wavelengths < $(3λ1 / 1e3) km only (approximate baroclinic)")]
 
 land = land_mask .== 0
 for (name, a, _) in ssh_out
@@ -274,21 +382,33 @@ for (name, a, _) in ssh_out
     (n_land_ok == count(land) * nt && n_ocean_nan == 0) ||
         error("$name: land not all NaN ($n_land_ok of $(count(land) * nt)) or NaN over ocean ($n_ocean_nan)")
 end
-println("land mask check passed: land is NaN and the ocean has no NaN in all four fields ($(count(land)) land points)")
+println("land mask check passed: land is NaN and the ocean has no NaN in all $(length(ssh_out)) fields ($(count(land)) land points)")
 
 # one chunk per snapshot: reading a map at one time is fast; a time series at one point reads all chunks
-# (~5.5 GB per field for the full run, ~22 GB in total, uncompressed)
+# (~5.5 GB per field for the full run, ~33 GB for all six, uncompressed)
 isfile(out_fname) && rm(out_fname)
 NCDataset(out_fname, "c") do ds
     defDim(ds, "xi_rho", nx_f)
     defDim(ds, "eta_rho", ny_f)
     defDim(ds, "time", nt)
+    defDim(ds, "kbin", nkbin)
 
     defVar(ds, "ocean_time", date, ("time",);
            attrib = ["long_name" => "time", "units" => "seconds since 1994-01-01 00:00:00", "calendar" => "standard"])
     defVar(ds, "lon_rho", lon_rho[1:nx_f, 1:ny_f], ("xi_rho", "eta_rho"); attrib = ["units" => "degree_east"])
     defVar(ds, "lat_rho", lat_rho[1:nx_f, 1:ny_f], ("xi_rho", "eta_rho"); attrib = ["units" => "degree_north"])
     defVar(ds, "mask_rho", land_mask, ("xi_rho", "eta_rho"); attrib = ["long_name" => "1 = ocean, 0 = land"])
+
+    # plane removed in step 2b: plane(i, j, t) = plane_a + plane_b * i + plane_c * j, with i, j the 1-based xi, eta index
+    defVar(ds, "plane_a", plane_coef[1, :], ("time",); attrib = ["long_name" => "plane removed before DFF: constant", "units" => "meter"])
+    defVar(ds, "plane_b", plane_coef[2, :], ("time",); attrib = ["long_name" => "plane removed before DFF: slope along xi", "units" => "meter per xi point"])
+    defVar(ds, "plane_c", plane_coef[3, :], ("time",); attrib = ["long_name" => "plane removed before DFF: slope along eta", "units" => "meter per eta point"])
+
+    defVar(ds, "k_center", k_center ./ dx_m, ("kbin",); attrib = ["long_name" => "|k| bin centre", "units" => "rad per meter"])
+    defVar(ds, "spec_M2_north", spec_M2_north, ("kbin",);
+           attrib = ["long_name" => "M2-band ssh variance per |k| bin, grid-north sector, before the wavenumber cut", "units" => "m2"])
+    defVar(ds, "spec_M2_south", spec_M2_south, ("kbin",);
+           attrib = ["long_name" => "M2-band ssh variance per |k| bin, grid-south sector, before the wavenumber cut", "units" => "m2"])
 
     for (name, a, long_name) in ssh_out
         defVar(ds, name, a, ("xi_rho", "eta_rho", "time");
@@ -306,7 +426,12 @@ NCDataset(out_fname, "c") do ds
     ds.attrib["grid_south_sector_deg"] = "180 <= theta < 360"
     ds.attrib["M2_band_period_hours"] = collect(T_M2_band)
     ds.attrib["M2_band_cph"] = collect(fband_M2)
-    ds.attrib["note"] = "Nyquist frequency dropped for even nt (as in DFF_space.m); k = 0 (spatial mean) goes to the north sector"
+    ds.attrib["M2_lambda1_m"] = λ1
+    ds.attrib["M2_kcut_wavelength_m"] = 3λ1
+    ds.attrib["note"] = "A best-fit plane (plane_a/b/c) is removed from each snapshot before the DFF: " *
+                        "zeta = ssh_north + ssh_south + plane. Nyquist frequency dropped for even nt (as in DFF_space.m). " *
+                        "M2 and bc fields also drop wavelengths >= M2_kcut_wavelength_m, so ssh_north_M2 + ssh_south_M2 is not the full M2 signal; " *
+                        "the bc fields are an approximate baroclinic ssh (wavelength cut only, not a barotropic/baroclinic decomposition)."
 end
 println("wrote $out_fname")
 

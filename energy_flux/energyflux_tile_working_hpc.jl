@@ -41,6 +41,12 @@ println("running with $(nprocs() - 1) worker processes")
     end
     moor_group = [replace(n, r"\d+$" => "") for n in moor_name]   # "M3" -> "M", "CPIES7" -> "CPIES"
 
+    # grey isobaths on every map, same as the other map scripts
+    bathy_levels = [500, 1000, 2000]
+    add_bathy!(ax, lon, lat, depth) = contour!(ax, lon, lat, depth; levels = bathy_levels, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
+    # three-panel maps (Fx, Fy, |F|): 24 cm wide, font scaled to read 10 pt on the 18 cm page; latitude only on panel 1
+    panel_kw(n) = (; ylabel = n == 1 ? "Latitude" : "", yticklabelsvisible = n == 1, xticks = -48:2:-42)
+
     # one marker style per mooring type, so the three arrays can be told apart
     moor_style = Dict("french" => (marker = :star5,   markersize = 11, color = :magenta),
                       "M"      => (marker = :diamond, markersize = 7,  color = :cyan),
@@ -163,13 +169,14 @@ println("running with $(nprocs() - 1) worker processes")
         figs = Dict{String, Figure}()
         for b in bands
             Fmag = sqrt.(snap.Fx[b] .^ 2 .+ snap.Fy[b] .^ 2)   # flux magnitude |F|, W m-1
-            fig = Figure(; figkw(18, 7.2)...)
+            fig = Figure(; figkw(24, 9)...)
             fields = [("Fx (along xi)", snap.Fx[b] ./ 1e3, :balance, (-flux_lim, flux_lim)),   # W/m -> kW/m
                       ("Fy (along eta)", snap.Fy[b] ./ 1e3, :balance, (-flux_lim, flux_lim)),
                       ("|F|", Fmag ./ 1e3, :viridis, (0, flux_lim))]
             for (n, (title, data, colormap, colorrange)) in enumerate(fields)
-                ax = topdown_axis3(fig[1, 2n-1]; title = title, ylabel = n == 1 ? "Latitude" : "")
+                ax = topdown_axis(fig[1, 2n-1]; title = title, panel_kw(n)...)   # 2D axis: latitude label on the left
                 hm = plot_curvilinear!(ax, sub(lon_rho), sub(lat_rho), sub(data); colormap = colormap, colorrange = colorrange)
+                add_bathy!(ax, sub(lon_rho), sub(lat_rho), sub(h))
                 add_mooring!(ax)
                 Colorbar(fig[1, 2n], hm, label = "kW m⁻¹")
             end
@@ -219,7 +226,7 @@ all_dates = reduce(vcat, [NCDataset(joinpath(nc_dum_save, piece_files[findfirst(
                           end for iw in 1:nwindow])
 println("plotting $(length(all_dates)) time steps x $(length(band_info)) bands into ", join(frame_dir.(sort(collect(keys(band_info)))), ", "))
 @time pmap(all_dates; on_error = ex -> println("a time step failed: ", ex)) do target
-    plot_time(target; overwrite = true)   # redraw the frames saved before the moorings were added
+    plot_time(target; overwrite = true)   # redraw the frames saved before the isobaths were added
     nothing   # don't send the figures back to the main process
 end
 
@@ -258,13 +265,14 @@ end
 # plot the mean, one figure per band, saved in figure_path
 mean_lim = 30   # kW/m
 for b in sort(collect(keys(band_info)))
-    fig_mean = Figure(; figkw(18, 7.2)...)
+    fig_mean = Figure(; figkw(24, 9)...)
     fields_mean = [("Fx (along xi)", Fx_mean[b], :balance, (-mean_lim, mean_lim)),
                    ("Fy (along eta)", Fy_mean[b], :balance, (-mean_lim, mean_lim)),
                    ("|mean F|", F_mag_mean[b], :viridis, (0, mean_lim))]
     for (n, (title, data, colormap, colorrange)) in enumerate(fields_mean)
-        ax = topdown_axis3(fig_mean[1, 2n-1]; title = title, ylabel = n == 1 ? "Latitude" : "")
+        ax = topdown_axis(fig_mean[1, 2n-1]; title = title, panel_kw(n)...)
         hm = plot_curvilinear!(ax, lon_rho, lat_rho, data; colormap = colormap, colorrange = colorrange)
+        add_bathy!(ax, lon_rho, lat_rho, h)
         add_mooring!(ax)
         Colorbar(fig_mean[1, 2n], hm, label = "kW m⁻¹")
     end
@@ -280,9 +288,10 @@ end
 # |mean F| on its own, one figure per band, saved in figure_path
 for b in sort(collect(keys(band_info)))
     fig_mag = Figure(; figkw(18, 15.4)...)
-    ax = topdown_axis3(fig_mag[1, 1]; title = "|mean F|, $b ($(band_info[b]))\n" *
+    ax = topdown_axis(fig_mag[1, 1]; title = "|mean F|, $b ($(band_info[b]))\n" *
                        "$(Dates.format(mean_start, "yyyy-mm-dd HH:MM")) -> $(Dates.format(mean_end, "yyyy-mm-dd HH:MM"))  ($nmean hourly records)")
     hm = plot_curvilinear!(ax, lon_rho, lat_rho, F_mag_mean[b]; colormap = Reverse(:Spectral), colorrange = (0, mean_lim))
+    add_bathy!(ax, lon_rho, lat_rho, h)
     add_mooring!(ax)
     Colorbar(fig_mag[1, 2], hm, label = "kW m⁻¹")
     mag_fname = joinpath(figure_path, "energyflux_mean_mag_$(b)_$(Dates.format(mean_start, "yyyymmdd"))_$(Dates.format(mean_end, "yyyymmdd")).png")

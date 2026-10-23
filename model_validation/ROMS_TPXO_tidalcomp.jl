@@ -80,7 +80,7 @@ const SPONGE = 27.0                          # km removed along each open bounda
 const LC_SD  = 400.0                         # km, half-power wavelength of the low-pass, semidiurnal and higher
 const LC_D   = 800.0                         # km, diurnal
 const HSHELF = 200.0                         # m, shelf / deep-water split
-const HDEEP  = 2000.0                        # m, figure 6: co-phase lines only in deeper water
+const HDEEP  = 2000.0                        # m, co-phase lines only in deeper water (figures 1, 5, 6)
 const BATHY  = [500, 1000, 2000]             # m, grey isobaths in figure 6
 const MAJOR  = ["M2", "S2", "N2", "K2", "K1", "O1", "P1", "Q1"]
 const DIURNAL = ["K1", "O1", "P1", "Q1", "J1", "OO1"]
@@ -443,6 +443,13 @@ end
 nanout(X) = ifelse.(WET, X, NaN)
 q(X, p) = quantile(filter(isfinite, vec(X[M])), p)
 gm_unw(zr) = (gm = rad2deg(angle(sum(W .* zr))); z -> (G = -rad2deg.(angle.(z)); mod.(G .+ gm .+ 180, 360) .- 180 .- gm))   # phase unwrapped about the area mean
+deep(X) = ifelse.(hmap .>= HDEEP, X, NaN)                              # map-grid field, NaN where h < HDEEP
+function phase_lev(G)                                                  # co-phase levels for deep water: every 1, 2 or 3 deg
+    g = G[M .& (hR .>= HDEEP)]
+    rng = -(reverse(quantile(vec(g), [0.01, 0.99]))...)
+    dl = rng <= 12 ? 1 : rng <= 24 ? 2 : 3
+    return dl, (floor(minimum(g) / dl) * dl):dl:(ceil(maximum(g) / dl) * dl)
+end
 mapsuf = "ROMS Amazon 900 m ($tlab) vs $TPLAB" * (TSIG > 0 ? ", smoothed σ = $(round(Int, TSIG)) km (|Z| < $(round(Int, TSMA)) cm)" : "")
 
 ## figure 1: ROMS barotropic amplitude + co-phase lines, amplitude and phase differences
@@ -453,12 +460,12 @@ for (row, c) in enumerate(mc)
     Ar = abs.(zr); Gr = unw(zr); Gt = unw(zt)
     dA = nanout(Ar .- abs.(zt)); dG = nanout(-rad2deg.(angle.(zr .* conj.(zt))))
     dAm = max(q(abs.(dA), 0.99), 0.05); dGm = max(q(abs.(dG), 0.99), 1.0)
-    lev = (floor(minimum(Gr) / 10) * 10):10:(ceil(maximum(Gr) / 10) * 10)
+    dl, lev = phase_lev(Gr)
     kw = (; xlabelvisible = row == length(mc), xticklabelsvisible = row == length(mc), mapax..., xticks = 312:4:320)
-    a1 = Axis(fig[row, 1]; title = "$c amplitude (ROMS bt) [cm]\nphase every 10°", ylabel = "latitude", xlabel = "longitude", kw...)
+    a1 = Axis(fig[row, 1]; title = "$c amplitude (ROMS bt) [cm]\nphase every $(dl)° (h > $(Int(HDEEP)) m)", ylabel = "latitude", xlabel = "longitude", kw...)
     h1 = heatmap!(a1, lonv, latv, rg(nanout(Ar)); colormap = :Blues, colorrange = (0, q(Ar, 0.995)))
-    contour!(a1, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.7)
-    contour!(a1, lonv, latv, rg(nanout(Gt)); levels = lev, color = :darkorange, linewidth = 0.7, linestyle = :dash)
+    contour!(a1, lonv, latv, deep(rg(Gr)); levels = lev, color = :black, linewidth = 0.7)
+    contour!(a1, lonv, latv, deep(rg(nanout(Gt))); levels = lev, color = :darkorange, linewidth = 0.7, linestyle = :dash)
     Colorbar(fig[row, 2], h1; height = Relative(0.8))
     a2 = Axis(fig[row, 3]; title = "$c amplitude\nROMS - $(TPN) [cm]", xlabel = "longitude", yticklabelsvisible = false, kw...)
     h2 = heatmap!(a2, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dAm, dAm))
@@ -528,16 +535,14 @@ fig5 = Figure(; figkw(22, 24)...)
 for (n, c) in enumerate(mc)
     zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
     Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
-    rng = -(reverse(quantile(vec(Gr[M]), [0.01, 0.99]))...)
-    dl = first(d for d in (1, 2, 5, 10, 15, 30) if rng / d <= 12)
-    lev = (floor(minimum(Gr) / dl) * dl):dl:(ceil(maximum(Gr) / dl) * dl)
+    dl, lev = phase_lev(Gr)
     row, col = fldmod1(n, 2)
-    a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm]\nGreenwich phase every $(dl)°", xlabel = "longitude", ylabel = "latitude",
+    a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm]\nGreenwich phase every $(dl)° (h > $(Int(HDEEP)) m)", xlabel = "longitude", ylabel = "latitude",
               mapax..., xlabelvisible = row == 2, xticklabelsvisible = row == 2, ylabelvisible = col == 1, yticklabelsvisible = col == 1)
     h5 = heatmap!(a5, lonv, latv, rg(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
     deco!(a5; box = false)
-    contour!(a5, lonv, latv, rg(Gt); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
-    contour!(a5, lonv, latv, rg(Gr); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 10,
+    contour!(a5, lonv, latv, deep(rg(Gt)); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
+    contour!(a5, lonv, latv, deep(rg(Gr)); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 10,
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
     Colorbar(fig5[row, 2col], h5; label = "amplitude [cm]", height = Relative(0.8))
 end
@@ -552,10 +557,7 @@ let c = "M2"
     Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
     dA = nanout(abs.(zr) .- abs.(zt)); dAm = max(q(abs.(dA), 0.99), 0.05)
     dAc = filter(isfinite, dA[M])                                       # comparison area
-    D = M .& (hR .>= HDEEP); deep(X) = ifelse.(hmap .>= HDEEP, X, NaN)  # co-phase lines in deep water only
-    rng = -(reverse(quantile(vec(Gr[D]), [0.01, 0.99]))...)
-    dl = first(d for d in (1, 2, 3, 5, 10) if rng / d <= 12)
-    lev = (floor(minimum(Gr[D]) / dl) * dl):dl:(ceil(maximum(Gr[D]) / dl) * dl)
+    dl, lev = phase_lev(Gr)                                             # co-phase lines in deep water only
     fig6 = Figure(; figkw(22, 13)...)
     a6 = Axis(fig6[1, 1]; title = "$c: amplitude [cm]\nGreenwich phase every $(dl)° (h > $(Int(HDEEP)) m)", xlabel = "longitude", ylabel = "latitude", mapax...)
     h6 = heatmap!(a6, lonv, latv, rg(Ar); colormap = Reverse(:Spectral), colorrange = (0, q(Ar, 0.999)))

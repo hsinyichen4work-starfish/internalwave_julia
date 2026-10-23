@@ -19,6 +19,10 @@ function sub_file!(file, pairs::Pair...)
     return nothing
 end
 
+# Folder holding the input files and their partitioned copies:
+# projectpath * c.input_dir (default "input") * "/"
+input_base(c) = c.projectpath * get(c, :input_dir, "input") * "/"
+
 # Fortran double-precision literal, e.g. 6 -> "6.0D+00"
 fortran_d(x) = replace(uppercase(@sprintf("%.1e", x)), "E" => "D")
 
@@ -50,15 +54,15 @@ function infile_make(c)
         mv(c.new_folder * "amazon_3day.in", c.new_folder * c.filename; force = true)
     end
 
-    grid_path = c.projectpath * "input/grid_" * c.TAG_USE * "/"
-    bry_path = c.projectpath * "input/bry_" * c.TAG_USE * "/"
-    dbry_path = c.projectpath * "input/dynbry_" * c.TAG_USE * "/"
-    frc_path = c.projectpath * "input/frc_" * c.TAG_USE * "/"
-    ini_path = c.projectpath * "input/ini_" * c.TAG_USE * "/"
+    input_dir = input_base(c)
+    grid_path = input_dir * "grid_" * c.TAG_USE * "/"
+    bry_path = input_dir * "bry_" * c.TAG_USE * "/"
+    dbry_path = input_dir * "dynbry_" * c.TAG_USE * "/"
+    frc_path = input_dir * "frc_" * c.TAG_USE * "/"
+    ini_path = input_dir * "ini_" * c.TAG_USE * "/"
     output_path = c.projectpath * c.fold_name * "/roms"
     mkpath(c.projectpath * c.fold_name)
 
-    input_dir = c.projectpath * "input/"
     days = run_days(c)
     frc_str = file_list(input_dir * c.input_folder.frc, c.input_filenames.frc, frc_path, days)
     bry_str = file_list(input_dir * c.input_folder.bry, c.input_filenames.bry, bry_path, days)
@@ -112,7 +116,7 @@ end
 
 function do_partition_make(c)
     sub_file!(c.new_folder * "do_partition.sh",
-        "EXAMPLE_INPUT" => c.projectpath * "input/",
+        "EXAMPLE_INPUT" => input_base(c),
         "npxi_ex" => string(c.NP_XI),
         "npeta_ex" => string(c.NP_ETA),
         "tag_ex" => c.TAG_USE,

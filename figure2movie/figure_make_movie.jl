@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/orlanski_comp/v_snapshot";
-movie_path = "/expanse/lustre/projects/uso101/hchen54/figure/orlanski_comp";
-start_string = "v_100m_comp"
+figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/DFF";
+movie_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/DFF";
+start_string = "ssh_check"
 
 cd(figure_path)
 readdir(figure_path) 
