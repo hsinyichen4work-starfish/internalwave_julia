@@ -1,8 +1,8 @@
 using FFMPEG_jll
 
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/DFF";
-movie_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/DFF";
-start_string = "ssh_check"
+figure_path = "/home/hsinyi/figure/20261023_NCOM2700/full_domain/zeta_grad";
+movie_path = "/home/hsinyi/figure/20261023_NCOM2700/full_domain/";
+start_string = "zeta_grad_ncom_plot"
 
 cd(figure_path)
 readdir(figure_path) 
