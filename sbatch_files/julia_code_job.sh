@@ -12,9 +12,10 @@
 #SBATCH --mail-user=HsinYi.Chen@usm.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,TIME_LIMIT_90
  
+set -o pipefail   # job shows FAILED (not COMPLETED) when julia fails, despite the tee
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
 export JULIA_PROJECT=/home/hchen54/internalwave_julia   # the worker processes inherit this
-julia DFF_ploting.jl 2>&1 | tee log_files/DFFPLOT_${SLURM_JOB_ID}.log
+julia DFF/DFF_ploting.jl 2>&1 | tee log_files/DFFPLOT_${SLURM_JOB_ID}.log
  # adjust to wherever you keep the script
