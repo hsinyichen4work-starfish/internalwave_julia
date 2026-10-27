@@ -22,9 +22,14 @@ println("running with $(nprocs() - 1) worker processes")
     using NCDatasets, Dates, Statistics
 
     grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
-    ddf_fname = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/ddf_ssh/ssh_ddf_north_south.nc"   # made by DDF_on_ssh.jl
+    include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")   # dff_run, run_dir, ddf_dir, fig_dir (set by DFF_RUN; workers inherit it)
+    ddf_fname = joinpath(ddf_dir, "ssh_ddf_north_south.nc")   # made by DDF_on_ssh.jl
     ds_ddf = NCDataset(ddf_fname)
-    ssh_names = ["ssh_north", "ssh_south", "ssh_north_M2", "ssh_south_M2", "ssh_north_bc", "ssh_south_bc"]
+    # half-plane sectors (north 0–180°, south 180–360°) and the small sectors (north 60–120°, south 240–300°), each as
+    # all frequencies, M2 and bc
+    ssh_names = ["ssh_north", "ssh_south", "ssh_north_M2", "ssh_south_M2", "ssh_north_bc", "ssh_south_bc",
+                 "ssh_north_smallsec", "ssh_south_smallsec", "ssh_north_smallsec_M2", "ssh_south_smallsec_M2",
+                 "ssh_north_smallsec_bc", "ssh_south_smallsec_bc"]
 
     # DDF_on_ssh.jl dropped the last xi and eta row so nx, ny are odd — trim the grid fields the same way
     nx_f, ny_f = ds_ddf.dim["xi_rho"], ds_ddf.dim["eta_rho"]
@@ -106,7 +111,7 @@ println("Hovmöller lines: ", join(["$n xi = $i" for (n, i) in tr_lines], ", "))
 # not remove) at the longest wavelengths, and a mode-1 internal-tide peak near λ1. The cut (dashed red) should sit
 # between the two; if the mode-1 peak is not near the assumed λ1 (dotted), change λ1 in DDF_on_ssh.jl and re-run.
 @everywhere using CairoMakie
-@everywhere figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/DFF"
+@everywhere figure_path = fig_dir
 mkpath(figure_path)
 
 k_center = ds_ddf["k_center"][:]   # [rad per meter]
@@ -144,7 +149,7 @@ println("M2 variance removed by the cut: north $(round(100 * sum(spec_north[cut]
 # lines, and the spatial mean of the raw ssh. Reading once matters: the full DDF file is ~33 GB.
 # Memory stays small: the sums are a few [xi, eta] maps, the lines are 3 x 7 x [eta, time] (~170 MB for the full record).
 @everywhere include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")   # topdown_axis, plot_curvilinear!
-@everywhere ssh_raw_fname = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/ddf_ssh/roms_ssh_hourly.nc"   # made by DDF_on_ssh.jl (1b)
+@everywhere ssh_raw_fname = joinpath(ddf_dir, "roms_ssh_hourly.nc")   # made by DDF_on_ssh.jl (1b)
 
 check_day = Date(2022, 9, 4)   # the one-day zoom (amplitude maps, Hovmöller, movie) next to the full period
 day_tidx = findfirst(d -> Date(d) == check_day, date):findlast(d -> Date(d) == check_day, date)
@@ -192,8 +197,13 @@ function time_pass()
 end
 @time amp_all, cols, raw_mean = time_pass()
 
+# (group, field suffix, description): ssh_north<suffix> and ssh_south<suffix>. The _smallsec groups keep only the
+# narrow sectors (north 60–120°, south 240–300°), so their north + south is not the total
 groups = [("total", "", "all frequencies"), ("M2", "_M2", "M2 band, λ < $(round(Int, λcut / 1e3)) km"),
-          ("bc", "_bc", "all freq, λ < $(round(Int, λcut / 1e3)) km")]
+          ("bc", "_bc", "all freq, λ < $(round(Int, λcut / 1e3)) km"),
+          ("total_smallsec", "_smallsec", "small sector, all frequencies"),
+          ("M2_smallsec", "_smallsec_M2", "small sector, M2 band, λ < $(round(Int, λcut / 1e3)) km"),
+          ("bc_smallsec", "_smallsec_bc", "small sector, all freq, λ < $(round(Int, λcut / 1e3)) km")]
 edge = 30   # colour ranges come from the interior: skip this many points along the edges (FFT edge-leakage bands)
 
 # ============================================================================
@@ -211,6 +221,9 @@ M2_band_str = "$(round(1 / fband_M2[2], digits = 1))–$(round(1 / fband_M2[1], 
 amp_desc = Dict("total" => "all frequencies, all wavelengths",
                 "M2" => "M2 band ($M2_band_str), λ < $(round(Int, λcut / 1e3)) km",
                 "bc" => "all frequencies, λ < $(round(Int, λcut / 1e3)) km (approximate baroclinic)")
+for g in ("total", "M2", "bc")   # small sectors: north 60–120°, south 240–300°
+    amp_desc["$(g)_smallsec"] = "small sectors 60–120° / 240–300°, " * amp_desc[g]
+end
 
 function plot_amp(p, ptidx, group, suffix)
     A_north, A_south = amp_all[(p, "ssh_north$suffix")], amp_all[(p, "ssh_south$suffix")]
@@ -226,7 +239,7 @@ function plot_amp(p, ptidx, group, suffix)
     lon_s, lat_s, h_s = sub(lon_rho), sub(lat_rho), sub(h)
     inner(a) = vec(a[edge+1:end-edge, edge+1:end-edge])   # the edges then saturate
     amax = round(quantile(filter(!isnan, vcat(inner(A_north), inner(A_south))), 0.99) * 100, RoundUp; sigdigits = 2)   # cm
-    alabel = group == "M2" ? "M2 amplitude [cm]" : "√2 × ssh std [cm]"
+    alabel = startswith(group, "M2") ? "M2 amplitude [cm]" : "√2 × ssh std [cm]"
     # ratio on a log10 scale so "4x more south" and "4x more north" look equally strong; red = south dominates
     panels = [("A north (grid-north going)", A_north .* 100, :thermal, (0, amax), alabel),
               ("A south (grid-south going)", A_south .* 100, :thermal, (0, amax), alabel),
@@ -252,9 +265,9 @@ end
 # ============================================================================
 # y = distance along the line from its grid-south (shelf) end, x = time. "north" waves travel up the plot, so their
 # phase lines tilt up to the right; "south" waves tilt down. Slope = phase speed along the line.
-# Per line and time range (full, Aug–Sep, Oct, Nov, day), seven figures:
-#   hovmoller_dir_<group>_*  north and south going (2 panels), for group = total, M2, bc
-#   hovmoller_sum_<group>_*  north + south, for group = total, M2, bc
+# Per line and time range (full, Aug–Sep, Oct, Nov, day), two figures per group and one raw:
+#   hovmoller_dir_<group>_*  north and south going (2 panels), for each group (total, M2, bc and their _smallsec)
+#   hovmoller_sum_<group>_*  north + south, for each group
 #   hovmoller_raw_*          raw ssh − spatial mean
 # Colour ranges are shared by all panels of a figure type and by all three lines (per period), so everything compares.
 hov = Dict{String, Any}()
@@ -385,47 +398,66 @@ GC.gc()
 # ============================================================================
 # (6) hourly snapshot frames: raw ssh − spatial mean vs the DFF pieces — the long part, so it comes last
 # ============================================================================
-# Each frame: column 1 raw ssh minus its spatial mean; columns 2–4 all frequencies / M2 / bc, with north + south on
-# top, then north, then south. One colour range for every panel and every frame (from a sample of hours), so all
-# columns and all frames compare directly. Frames are read one at a time (memory stays small) and a frame whose png
-# exists is skipped, so an interrupted run just continues. ~15–20 s per frame: the full record is ~10–13 h on one
-# process, so the frames are drawn by the workers in parallel (pmap hands each worker the next frame when it is free).
-# north + south (all frequencies) must equal raw minus the plane removed in DDF_on_ssh.jl step 2b — printed per frame.
+# Two kinds of frame per hour, both 10 panels: column 1 raw ssh minus its spatial mean; columns 2–4 all frequencies /
+# M2 / bc, with north + south on top, then north, then south.
+#   "half"      ssh_check_<date>.png           half-plane sectors (north 0–180°, south 180–360°)
+#   "smallsec"  ssh_check_smallsec_<date>.png  small sectors (north 60–120°, south 240–300°)
+# One colour range for every panel, both kinds and every frame (from a sample of hours), so everything compares
+# directly. Frames are read one at a time (memory stays small) and a frame whose png exists is skipped, so an
+# interrupted run just continues. ~15–20 s per frame: the full record is ~10–13 h per kind on one process, so the
+# frames are drawn by the workers in parallel (pmap hands each worker the next frame when it is free).
+# Half-plane north + south (all frequencies) must equal raw minus the plane removed in DDF_on_ssh.jl step 2b — printed
+# per frame.
 frame_tidx = 1:nt   # every hour of the record; e.g. 1:3:nt for every 3rd hour (3x faster), or day_tidx for one day
+frame_kinds = ["half", "smallsec"]   # which kinds to draw
 overwrite = false   # true: redraw frames that already exist
 
 @everywhere begin
     plane_a, plane_b, plane_c = ds_ddf["plane_a"][:], ds_ddf["plane_b"][:], ds_ddf["plane_c"][:]
     plane(t) = plane_a[t] .+ plane_b[t] .* (1:nx_f) .+ plane_c[t] .* (1:ny_f)'   # [xi, eta], as removed in step 2b
-    frame_fname(t) = joinpath(figure_path, "ssh_check_$(Dates.format(date[t], "yyyymmddHH")).png")
+    frame_path = joinpath(figure_path, "ssh_check_figure")
+    frame_tag = Dict("half" => "ssh_check", "smallsec" => "ssh_check_smallsec")
+    frame_fname(kind, t) = joinpath(frame_path, "$(frame_tag[kind])_$(Dates.format(date[t], "yyyymmddHH")).png")
 end
-columns = [("raw ssh − spatial mean", nothing, nothing),
-           ("all frequencies", "ssh_north", "ssh_south"),
-           ("M2 (9–15 h, λ < $(round(Int, λcut / 1e3)) km)", "ssh_north_M2", "ssh_south_M2"),
-           ("bc (all freq, λ < $(round(Int, λcut / 1e3)) km)", "ssh_north_bc", "ssh_south_bc")]
+mkpath(frame_path)
+λc_str = "λ < $(round(Int, λcut / 1e3)) km"
+frame_columns = Dict(
+    "half" => [("raw ssh − spatial mean", nothing, nothing),
+               ("all frequencies", "ssh_north", "ssh_south"),
+               ("M2 (9–15 h, $λc_str)", "ssh_north_M2", "ssh_south_M2"),
+               ("bc (all freq, $λc_str)", "ssh_north_bc", "ssh_south_bc")],
+    "smallsec" => [("raw ssh − spatial mean", nothing, nothing),
+                   ("small sector, all frequencies", "ssh_north_smallsec", "ssh_south_smallsec"),
+                   ("small sector, M2 (9–15 h, $λc_str)", "ssh_north_smallsec_M2", "ssh_south_smallsec_M2"),
+                   ("small sector, bc (all freq, $λc_str)", "ssh_north_smallsec_bc", "ssh_south_smallsec_bc")])
+frame_title = Dict("half" => "north/south = grid-north/south going, 0–180° / 180–360°",
+                   "smallsec" => "small sectors: north 60–120°, south 240–300° (grid)")
 
-# one colour range for all frames: 99th percentile of |panel| over a sample of hours (every 24th frame, every 4th point)
+# one colour range for all frames: 99th percentile of |panel| over a sample of hours (every 24th frame, every 4th
+# point), from the half-plane panels (the small sectors are a part of them)
 frame_clim = let samp = Float32[]
     q4(a) = vec(abs.(a[1:4:end, 1:4:end]))
     for t in frame_tidx[1:24:end]
         append!(samp, q4(read_raw(t) .- raw_mean[t]))
-        for (_, nn, sn) in columns[2:end]
+        for (_, nn, sn) in frame_columns["half"][2:end]
             append!(samp, q4(read_map(nn, t) .+ read_map(sn, t)))
         end
     end
     round(quantile(filter(!isnan, samp), 0.99), RoundUp; sigdigits = 2)
 end
-println("frames: $(length(frame_tidx)) ($(pstr(frame_tidx))), colour range ± $frame_clim m")
+println("frames: $(length(frame_tidx)) per kind ($(pstr(frame_tidx))), kinds $(join(frame_kinds, ", ")), ",
+        "colour range ± $frame_clim m, saved in $frame_path")
 
 # what the workers need from this process ($ copies the value over)
 @everywhere frame_clim = $frame_clim
-@everywhere columns = $columns
+@everywhere frame_columns = $frame_columns
+@everywhere frame_title = $frame_title
 @everywhere raw_mean = $raw_mean
 
-@everywhere function draw_frame(t)
+@everywhere function draw_frame((kind, t))
     raw = read_raw(t)
-    f = Dict(name => read_map(name, t) for name in ssh_names)
-    err = maximum(abs, f["ssh_north"] .+ f["ssh_south"] .- (raw .- plane(t)))
+    columns = frame_columns[kind]
+    f = Dict(name => read_map(name, t) for (_, nn, sn) in columns[2:end] for name in (nn, sn))
     stride = 2   # every 2nd grid point: ~300 px per panel, nothing visible is lost and drawing is ~4x faster
     sub(a) = a[1:stride:end, 1:stride:end]
     lon_s, lat_s, h_s = sub(lon_rho), sub(lat_rho), sub(h)
@@ -449,32 +481,38 @@ println("frames: $(length(frame_tidx)) ($(pstr(frame_tidx))), colour range ± $f
                       [[LineElement(color = :black, linestyle = :dash)], [LineElement(color = :gray40)]],
            ["french", "M1–M4", "CPIES1–9", "Hovmöller lines (xi = $(join(last.(tr_lines), ", ")))", "200 m isobath"];
            framevisible = false, tellwidth = false)   # tellwidth = false: the legend must not narrow the raw-ssh column
-    Label(fig[0, :], "DFF ssh check   $(Dates.format(date[t], "yyyy-mm-dd HH:MM"))   (north/south = grid-north/south going)", fontsize = 16)
-    save(frame_fname(t), fig)
-    println("saved $(basename(frame_fname(t)))   max |north + south − (raw − plane)| = $(round(err, sigdigits = 2)) m")
+    Label(fig[0, :], "DFF ssh check   $(Dates.format(date[t], "yyyy-mm-dd HH:MM"))   ($(frame_title[kind]))", fontsize = 16)
+    save(frame_fname(kind, t), fig)
+    if kind == "half"
+        err = maximum(abs, f["ssh_north"] .+ f["ssh_south"] .- (raw .- plane(t)))
+        println("saved $(basename(frame_fname(kind, t)))   max |north + south − (raw − plane)| = $(round(err, sigdigits = 2)) m")
+    else
+        println("saved $(basename(frame_fname(kind, t)))")
+    end
     # free the figure before the next one (as free_memory() in energyflux_tile_working_hpc.jl): CairoMakie keeps
     # each figure's buffers until collected
     empty!(fig)
     GC.gc()
     Sys.islinux() && ccall(:malloc_trim, Cint, (Cint,), 0)
 end
-frames_todo = [t for t in frame_tidx if overwrite || !isfile(frame_fname(t))]
-println("$(length(frames_todo)) of $(length(frame_tidx)) frames to draw on $(nworkers()) workers")
+frames_todo = [(kind, t) for kind in frame_kinds for t in frame_tidx if overwrite || !isfile(frame_fname(kind, t))]
+println("$(length(frames_todo)) of $(length(frame_kinds) * length(frame_tidx)) frames to draw on $(nworkers()) workers")
 @time pmap(draw_frame, frames_todo)
 @everywhere close(ds_raw)
 
 # ============================================================================
-# (7) movies from the frames: the full record and the one-day zoom (same ffmpeg call as figure2movie/figure_make_movie.jl)
+# (7) movies from the frames: the full record and the one-day zoom, each kind (same ffmpeg call as
+# figure2movie/figure_make_movie.jl), saved next to the frames
 # ============================================================================
 using FFMPEG_jll
 movies = [(frame_tidx, 24),   # full record: 24 frames/s = one model day per second (~100 s for the 3 months)
           (day_tidx, 4)]      # one day: 4 frames/s, 6 s
 
-for (mtidx, fps) in movies
-    pngs = filter(isfile, frame_fname.(mtidx))   # in time order
-    isempty(pngs) && (println("no frames for $(plabel(mtidx)), skipping movie"); continue)
-    length(pngs) == length(mtidx) || @warn "$(length(pngs)) of $(length(mtidx)) frames found for $(plabel(mtidx)) — movie will have gaps"
-    movie_fname = joinpath(figure_path, "ssh_check_$(plabel(mtidx))_movie.mp4")
+for kind in frame_kinds, (mtidx, fps) in movies
+    pngs = filter(isfile, frame_fname.(kind, mtidx))   # in time order
+    isempty(pngs) && (println("no $kind frames for $(plabel(mtidx)), skipping movie"); continue)
+    length(pngs) == length(mtidx) || @warn "$(length(pngs)) of $(length(mtidx)) $kind frames found for $(plabel(mtidx)) — movie will have gaps"
+    movie_fname = joinpath(frame_path, "$(frame_tag[kind])_$(plabel(mtidx))_movie.mp4")
     listfile = movie_fname * "_filelist.txt"
     open(io -> foreach(p -> println(io, "file '$p'"), pngs), listfile, "w")
     # pad to even width/height (libx264 needs it); yuv420p so the mp4 plays in browsers/PowerPoint. -threads caps the

@@ -4,7 +4,8 @@ ENV["HDF5_USE_FILE_LOCKING"] = "FALSE"   # lustre: don't lock files that other j
 include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
 
 grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"   # HPC output dir — contains his/dia/station files mixed together
+include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")   # dff_run, run_dir, ddf_dir, fig_dir (set by DFF_RUN)
+datadir = joinpath(run_dir, "after_joint")   # HPC output dir — contains his/dia/station files mixed together
 
 # ============================================================================
 # (1) read ssh (zeta) from every his file into one [xi, eta, time] array
@@ -54,8 +55,8 @@ println("zeta: size $(size(zeta)), dt = $(dt[1] / 3600) h, ", date[1], " -> ", d
 # (1b) save the raw ssh with lon / lat / time to its own NetCDF file (for sharing; independent of the DDF below)
 # ============================================================================
 # Full 686 x 856 grid as in the ROMS output (no trimming), land = NaN. Set save_ssh = false to skip on re-runs.
-save_ssh = false
-ssh_fname = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/ddf_ssh/roms_ssh_hourly.nc"
+save_ssh = !isfile(joinpath(ddf_dir, "roms_ssh_hourly.nc"))   # made once per run; DFF_ploting.jl needs it
+ssh_fname = joinpath(ddf_dir, "roms_ssh_hourly.nc")
 
 if save_ssh
     mkpath(dirname(ssh_fname))
@@ -295,11 +296,6 @@ let n = 61, ntt = 48, kk = waxis(n), θt = wdir(kk, kk)
     println("  synthetic band filter: north sector at 4 cycles only, error $(maximum(abs, got_band .- a_north))")
 end
 
-# the real data: grid-north-going (0–180°) and grid-south-going (180–360°) ssh, all frequencies
-ssh_north = dff_sector(var_xy, 0 .<= θ .< 180, nt, land_mask)
-ssh_south = dff_sector(var_xy, 180 .<= θ .< 360, nt, land_mask)
-GC.gc()   # free dff_sector's temporary copies (~16 GB each call for the full run) before the next ones
-
 # M2 band: periods 9–15 h. A wide semidiurnal band, so it also holds N2, S2 and K2 (M2 dominates);
 # the inertial period here (~5°N) is ~140 h, well outside. Any record longer than ~2 days has frequencies in it.
 T_M2_band = (9, 15)   # [hours]
@@ -321,17 +317,6 @@ kmag = sqrt.(kx .^ 2 .+ (ky') .^ 2)   # |k| [rad per grid point], same layout as
 println("M2 wavenumber cut: λ1 = $(λ1 / 1e3) km, keep wavelengths < $(3λ1 / 1e3) km; ",
         "removes $(count(kmag .<= kcut)) of $(length(kmag)) wavenumbers")
 
-ssh_north_M2 = dff_sector(var_xy, (0 .<= θ .< 180) .& (kmag .> kcut), nt, land_mask; fkeep = fkeep_M2)
-ssh_south_M2 = dff_sector(var_xy, (180 .<= θ .< 360) .& (kmag .> kcut), nt, land_mask; fkeep = fkeep_M2)
-GC.gc()
-
-# all frequencies with the same wavelength cut: an approximate baroclinic (bc) ssh. Not a true barotropic/baroclinic
-# split — on the shallow shelf the barotropic tide is short enough to pass the cut, and anything else longer than 3λ1
-# (e.g. large eddies, basin-scale subtidal signal) is removed too. Time-mean and very low frequency features have no
-# clear travel direction, so they split between north and south.
-ssh_north_bc = dff_sector(var_xy, (0 .<= θ .< 180) .& (kmag .> kcut), nt, land_mask)
-ssh_south_bc = dff_sector(var_xy, (180 .<= θ .< 360) .& (kmag .> kcut), nt, land_mask)
-
 # M2-band ssh variance against |k| (before the cut), north and south sectors, for choosing λ1 and kcut.
 # Parseval with the one-sided doubled spectrum: mean variance over (x, y, t) = Σ |X|² / (2 (nx ny nt)²),
 # so each bin holds the M2 ssh variance [m²] from that |k| ring; the bins add up to the total M2 variance.
@@ -350,44 +335,52 @@ end
 k_center = ((1:nkbin) .- 0.5) .* dk   # [rad per grid point]
 println("M2 |k| spectrum: $nkbin bins, width 2π/($(round(2π / dk * dx_m / 1e3, digits = 1)) km), ",
         "total M2 variance north $(round(sum(spec_M2_north), sigdigits = 3)) m², south $(round(sum(spec_M2_south), sigdigits = 3)) m²")
-GC.gc()
 
-# north + south must give back var (plane removed), apart from the Nyquist term dropped in step 3 (removed here as before)
-resid = ssh_north[ix, iy, :] .+ ssh_south[ix, iy, :] .- (var_pt .- nyq)
-println("ssh_north, ssh_south: size $(size(ssh_north)); at (xi, eta) = ($ix, $iy) north + south vs var: ",
-        "max |error| = $(maximum(abs, resid)) m; std north $(std(ssh_north[ix, iy, :])) m, south $(std(ssh_south[ix, iy, :])) m")
-println("M2 at (xi, eta) = ($ix, $iy): std north $(std(ssh_north_M2[ix, iy, :])) m, south $(std(ssh_south_M2[ix, iy, :])) m")
-println("bc at (xi, eta) = ($ix, $iy): std north $(std(ssh_north_bc[ix, iy, :])) m, south $(std(ssh_south_bc[ix, iy, :])) m")
-
-# ============================================================================
-# (7) check land is masked back, then save the four fields and the time axis to NetCDF
-# ============================================================================
-# Land was put back to NaN inside dff_sector (MATLAB's last loop: var1(land_mask == 0) = NaN).
-# This grid has no land, so the check is trivially true here, but it guards a grid that does.
-out_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/ddf_ssh"
-out_fname = joinpath(out_dir, "ssh_ddf_north_south.nc")
-mkpath(out_dir)
-
-ssh_out = [("ssh_north", ssh_north, "grid-north-going ssh (wavenumber direction 0-180 deg from xi axis), all frequencies"),
-           ("ssh_south", ssh_south, "grid-south-going ssh (wavenumber direction 180-360 deg from xi axis), all frequencies"),
-           ("ssh_north_M2", ssh_north_M2, "grid-north-going ssh, M2 band (periods 9-15 h), wavelengths < $(3λ1 / 1e3) km only"),
-           ("ssh_south_M2", ssh_south_M2, "grid-south-going ssh, M2 band (periods 9-15 h), wavelengths < $(3λ1 / 1e3) km only"),
-           ("ssh_north_bc", ssh_north_bc, "grid-north-going ssh, all frequencies, wavelengths < $(3λ1 / 1e3) km only (approximate baroclinic)"),
-           ("ssh_south_bc", ssh_south_bc, "grid-south-going ssh, all frequencies, wavelengths < $(3λ1 / 1e3) km only (approximate baroclinic)")]
-
-land = land_mask .== 0
-for (name, a, _) in ssh_out
-    n_land_ok = count(isnan, @view a[land, :])
-    n_ocean_nan = count(isnan, @view a[.!land, :])
-    (n_land_ok == count(land) * nt && n_ocean_nan == 0) ||
-        error("$name: land not all NaN ($n_land_ok of $(count(land) * nt)) or NaN over ocean ($n_ocean_nan)")
+# the fields to make: four direction sectors, each as all frequencies, M2 and bc
+#   north / south                    the two half planes (0–180°, 180–360°): north + south = total
+#   north_smallsec / south_smallsec  narrow sectors ±30° about grid north (60–120°) and grid south (240–300°): waves
+#                                    travelling close to along the eta axis only, so the oblique waves that go into the
+#                                    half-plane sectors are left out (smallsec north + south is not the total)
+#   ssh_<sector>      all frequencies, all wavelengths
+#   ssh_<sector>_M2   M2 band (9–15 h), wavelengths < 3λ1
+#   ssh_<sector>_bc   all frequencies, wavelengths < 3λ1: an approximate baroclinic (bc) ssh. Not a true
+#                     barotropic/baroclinic split — on the shallow shelf the barotropic tide is short enough to pass
+#                     the cut, and anything else longer than 3λ1 (e.g. large eddies, basin-scale subtidal signal) is
+#                     removed too. Time-mean and very low frequency features have no clear travel direction, so they
+#                     split between the sectors.
+sectors = [("north", 0, 180, "grid-north-going"), ("south", 180, 360, "grid-south-going"),
+           ("north_smallsec", 60, 120, "grid-north-going, small sector"), ("south_smallsec", 240, 300, "grid-south-going, small sector")]
+λstr = "$(3λ1 / 1e3) km"
+ssh_out = NamedTuple[]
+for (sec, a1, a2, desc) in sectors
+    dmask = a1 .<= θ .< a2   # half-open, as in step 5
+    push!(ssh_out, (name = "ssh_$sec", mask = dmask, fkeep = trues(nf),
+                    long_name = "$desc ssh (wavenumber direction $a1-$a2 deg from xi axis), all frequencies"))
+    push!(ssh_out, (name = "ssh_$(sec)_M2", mask = dmask .& (kmag .> kcut), fkeep = fkeep_M2,
+                    long_name = "$desc ssh ($a1-$a2 deg), M2 band (periods 9-15 h), wavelengths < $λstr only"))
+    push!(ssh_out, (name = "ssh_$(sec)_bc", mask = dmask .& (kmag .> kcut), fkeep = trues(nf),
+                    long_name = "$desc ssh ($a1-$a2 deg), all frequencies, wavelengths < $λstr only (approximate baroclinic)"))
 end
-println("land mask check passed: land is NaN and the ocean has no NaN in all $(length(ssh_out)) fields ($(count(land)) land points)")
 
-# one chunk per snapshot: reading a map at one time is fast; a time series at one point reads all chunks
-# (~5.5 GB per field for the full run, ~33 GB for all six, uncompressed)
-isfile(out_fname) && rm(out_fname)
-NCDataset(out_fname, "c") do ds
+# ============================================================================
+# (7) make each field, check land is masked back, and write it to NetCDF — one field at a time
+# ============================================================================
+# Each field is ~5.5 GB for the full run (12 fields ≈ 66 GB), and dff_sector needs ~16 GB of temporaries, so the fields
+# are not all kept in memory: each is computed, checked, written and freed before the next.
+# rebuild = false: if the file already exists, keep it and only add the fields it does not have yet (e.g. the small
+# sectors added later) — the existing ones are not recomputed. rebuild = true: delete the file and make everything.
+# Land was put back to NaN inside dff_sector (MATLAB's last loop: var1(land_mask == 0) = NaN). This grid has no land,
+# so the check is trivially true here, but it guards a grid that does.
+out_dir = ddf_dir
+out_fname = joinpath(out_dir, "ssh_ddf_north_south.nc")
+rebuild = false
+mkpath(out_dir)
+land = land_mask .== 0
+
+rebuild && isfile(out_fname) && rm(out_fname)
+new_file = !isfile(out_fname)
+ds = NCDataset(out_fname, new_file ? "c" : "a")
+if new_file
     defDim(ds, "xi_rho", nx_f)
     defDim(ds, "eta_rho", ny_f)
     defDim(ds, "time", nt)
@@ -409,34 +402,74 @@ NCDataset(out_fname, "c") do ds
            attrib = ["long_name" => "M2-band ssh variance per |k| bin, grid-north sector, before the wavenumber cut", "units" => "m2"])
     defVar(ds, "spec_M2_south", spec_M2_south, ("kbin",);
            attrib = ["long_name" => "M2-band ssh variance per |k| bin, grid-south sector, before the wavenumber cut", "units" => "m2"])
-
-    for (name, a, long_name) in ssh_out
-        defVar(ds, name, a, ("xi_rho", "eta_rho", "time");
-               chunksizes = [nx_f, ny_f, 1], fillvalue = NaN32,
-               attrib = ["long_name" => long_name, "units" => "meter"])
-    end
-
-    ds.attrib["title"] = "Directional Fourier filter (DFF) of ROMS ssh (zeta) into grid-north and grid-south going parts"
-    ds.attrib["source_dir"] = datadir
-    ds.attrib["method"] = "rfft in time, keep f >= 0, double f > 0; fft2 in space; angle mask theta1 <= theta < theta2 " *
-                          "(theta of wavenumber from grid xi axis, wave travel direction); inverse via irfft. " *
-                          "Based on DFF_space.m (O. Siyanbola 2025, after Gong et al. 2020)."
-    ds.attrib["grid"] = "$grid_fname, last xi and eta row dropped so nx, ny are odd"
-    ds.attrib["grid_north_sector_deg"] = "0 <= theta < 180"
-    ds.attrib["grid_south_sector_deg"] = "180 <= theta < 360"
-    ds.attrib["M2_band_period_hours"] = collect(T_M2_band)
-    ds.attrib["M2_band_cph"] = collect(fband_M2)
-    ds.attrib["M2_lambda1_m"] = λ1
-    ds.attrib["M2_kcut_wavelength_m"] = 3λ1
-    ds.attrib["note"] = "A best-fit plane (plane_a/b/c) is removed from each snapshot before the DFF: " *
-                        "zeta = ssh_north + ssh_south + plane. Nyquist frequency dropped for even nt (as in DFF_space.m). " *
-                        "M2 and bc fields also drop wavelengths >= M2_kcut_wavelength_m, so ssh_north_M2 + ssh_south_M2 is not the full M2 signal; " *
-                        "the bc fields are an approximate baroclinic ssh (wavelength cut only, not a barotropic/baroclinic decomposition)."
+else
+    # appending: the existing file must be on the same grid and hours
+    (ds.dim["xi_rho"], ds.dim["eta_rho"], ds.dim["time"]) == (nx_f, ny_f, nt) && ds["ocean_time"][:] == date ||
+        error("$out_fname has a different grid or time axis — set rebuild = true")
 end
+
+pt = Dict{String, Vector{Float32}}()   # time series at (ix, iy) of each field made in this run, for the checks below
+first_map = Dict{String, Matrix{Float32}}()   # first snapshot of each field made, for the read-back check
+for o in ssh_out
+    if haskey(ds, o.name)
+        println("$(o.name): already in the file, skipped")
+        continue
+    end
+    a = dff_sector(var_xy, o.mask, nt, land_mask; fkeep = o.fkeep)
+    n_land_ok = count(isnan, @view a[land, :])
+    n_ocean_nan = count(isnan, @view a[.!land, :])
+    (n_land_ok == count(land) * nt && n_ocean_nan == 0) ||
+        error("$(o.name): land not all NaN ($n_land_ok of $(count(land) * nt)) or NaN over ocean ($n_ocean_nan)")
+    # one chunk per snapshot: reading a map at one time is fast; a time series at one point reads all chunks
+    defVar(ds, o.name, a, ("xi_rho", "eta_rho", "time");
+           chunksizes = [nx_f, ny_f, 1], fillvalue = NaN32,
+           attrib = ["long_name" => o.long_name, "units" => "meter"])
+    pt[o.name] = a[ix, iy, :]
+    first_map[o.name] = a[:, :, 1]
+    println("$(o.name): written, land check passed, std at (xi, eta) = ($ix, $iy) $(round(std(pt[o.name]), sigdigits = 3)) m")
+    a = nothing
+    GC.gc()   # free this field and dff_sector's temporaries (~16 GB for the full run) before the next one
+end
+
+ds.attrib["title"] = "Directional Fourier filter (DFF) of ROMS ssh (zeta) into grid-north and grid-south going parts"
+ds.attrib["source_dir"] = datadir
+ds.attrib["method"] = "rfft in time, keep f >= 0, double f > 0; fft2 in space; angle mask theta1 <= theta < theta2 " *
+                      "(theta of wavenumber from grid xi axis, wave travel direction); inverse via irfft. " *
+                      "Based on DFF_space.m (O. Siyanbola 2025, after Gong et al. 2020)."
+ds.attrib["grid"] = "$grid_fname, last xi and eta row dropped so nx, ny are odd"
+ds.attrib["grid_north_sector_deg"] = "0 <= theta < 180"
+ds.attrib["grid_south_sector_deg"] = "180 <= theta < 360"
+ds.attrib["grid_north_smallsec_deg"] = "60 <= theta < 120"
+ds.attrib["grid_south_smallsec_deg"] = "240 <= theta < 300"
+ds.attrib["M2_band_period_hours"] = collect(T_M2_band)
+ds.attrib["M2_band_cph"] = collect(fband_M2)
+ds.attrib["M2_lambda1_m"] = λ1
+ds.attrib["M2_kcut_wavelength_m"] = 3λ1
+ds.attrib["note"] = "A best-fit plane (plane_a/b/c) is removed from each snapshot before the DFF: " *
+                    "zeta = ssh_north + ssh_south + plane. Nyquist frequency dropped for even nt (as in DFF_space.m). " *
+                    "M2 and bc fields also drop wavelengths >= M2_kcut_wavelength_m, so ssh_north_M2 + ssh_south_M2 is not the full M2 signal; " *
+                    "the bc fields are an approximate baroclinic ssh (wavelength cut only, not a barotropic/baroclinic decomposition). " *
+                    "The smallsec fields keep only the narrow sectors (60-120, 240-300 deg), so they do not add up to the total."
+close(ds)
 println("wrote $out_fname")
 
-# read back one field and the time axis to make sure the file is right
+# north + south must give back var (plane removed), apart from the Nyquist term dropped in step 3 (removed here as before)
+if haskey(pt, "ssh_north") && haskey(pt, "ssh_south")
+    resid = pt["ssh_north"] .+ pt["ssh_south"] .- (var_pt .- nyq)
+    println("at (xi, eta) = ($ix, $iy) north + south vs var: max |error| = $(maximum(abs, resid)) m")
+end
+# small sector vs its half plane at one point, for comparison: the small sector has less energy over the domain, but
+# at a single point it can be larger, where the oblique waves left out partly cancel it in the half plane
+for dir in ("north", "south"), sfx in ("", "_M2", "_bc")
+    big, small = "ssh_$(dir)$sfx", "ssh_$(dir)_smallsec$sfx"
+    haskey(pt, small) && haskey(pt, big) &&
+        println("$small vs $big at (xi, eta) = ($ix, $iy): std $(round(std(pt[small]), sigdigits = 3)) vs $(round(std(pt[big]), sigdigits = 3)) m")
+end
+
+# read back the fields written in this run (first snapshot) and the time axis to make sure the file is right
 NCDataset(out_fname) do ds
-    err = maximum(abs, ds["ssh_north"][:, :, 1] .- ssh_north[:, :, 1])
-    println("read back: ocean_time $(ds["ocean_time"][1]) -> $(ds["ocean_time"][end]), ssh_north[:, :, 1] max |difference| = $err")
+    println("read back: ocean_time $(ds["ocean_time"][1]) -> $(ds["ocean_time"][end])")
+    for (name, m) in first_map
+        println("  $name[:, :, 1] max |difference| = $(maximum(abs, ds[name][:, :, 1] .- m))")
+    end
 end

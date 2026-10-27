@@ -11,7 +11,9 @@
 #   - turns the tides on: tides.opt (ntides = 10, bry_tides, pot_tides) in the
 #     run folder, the tide file first in the forcing list, and a tide group in
 #     partition_input (CMEMS boundaries carry no tides, unlike NCOM's)
-#   - switches EXTRACT_DATA off (the mooring file is for the 900 m grid)
+#   - points extract_data.opt at the 2700 m mooring file (copied into the run
+#     folder, where ROMS reads it by bare name); extraction is switched by
+#     do_extract in extract_data.opt, not by the EXTRACT_DATA cpp flag
 #
 #     julia make_run_folder/make_run_folder_cmems.jl
 
@@ -73,10 +75,13 @@ sub_file!(new_folder * filename, "forcing: filename\n" => "forcing: filename\n  
 
 copy_example("cppdefs.opt")
 cppdef_make(c)
-sub_file!(new_folder * "cppdefs.opt", "#define EXTRACT_DATA" => "#undef EXTRACT_DATA")
 
 foreach(copy_example, ("submit_joint_mpi.sh", "joint_output_record_mpi.sh", "readme_joint"))
 do_joint_make(c)
+# serial join fallback (bash submit_joint_serial.sh on the login node)
+foreach(copy_example, ("submit_joint_serial.sh", "joint_output_record_serial.sh"))
+sub_file!(new_folder * "submit_joint_serial.sh", "BASE=\$EXAMPLE_OUTPUT" => "BASE=" * c.output_fold)
+chmod(new_folder * "joint_output_record_serial.sh", 0o755)
 
 foreach(copy_example, ("do_partition.sh", "partition_input"))
 do_partition_make(c)
@@ -109,6 +114,11 @@ param_make(c)
 
 foreach(copy_example, ("obc_tune.opt", "extract_data.opt"))
 obctune_make(c)
+
+# Extraction-point file for the 2700 m grid, read by bare name next to ./roms
+edata_file = projectpath * "input/grid/roms_cmems_grd_2700m_mor_edata.nc"
+cp(edata_file, new_folder * basename(edata_file); force = true)
+sub_file!(new_folder * "extract_data.opt", "roms_grd_900m_mor_edata.nc" => basename(edata_file))
 
 # tides.opt: the run folder copy overrides src/tides.opt at compile time
 cp("/home/hchen54/ucla-roms/src/tides.opt", new_folder * "tides.opt"; force = true)

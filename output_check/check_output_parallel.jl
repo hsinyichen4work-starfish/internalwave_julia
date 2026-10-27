@@ -10,10 +10,24 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
-    grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
-    mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
-    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_pure_or/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
-    figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_pure_or"
+    # which run to plot: CHECK_RUN=cmems_2700m (default) or 900m_pure_or
+    # (the workers inherit ENV from the main process)
+    run_name = get(ENV, "CHECK_RUN", "cmems_2700m")
+    proj = "/expanse/lustre/projects/uso101/hchen54/"
+    run_cfg = Dict(
+        # 2700 m CMEMS ini/bry + ERA5 forcing + TPXO10 tides, 378 x 509 rho points
+        "cmems_2700m"  => (grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
+                           moor = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc",
+                           fold = "amazon_2700m_cmems_test", skip = 22),
+        # 900 m NCOM run, 686 x 856 rho points
+        "900m_pure_or" => (grid = proj * "input/grid/roms_grd_900m.nc",
+                           moor = proj * "input/roms_grd_900m_mor_edata.nc",
+                           fold = "amazon_900m_pure_or", skip = 40))[run_name]
+
+    grid_fname = run_cfg.grid   # the grid_file listed in the .nc's global attributes
+    mooring_file = run_cfg.moor   # french, M1..M4, CPIES1..9
+    datadir = proj * run_cfg.fold * "/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
+    figure_path = proj * "figure/" * run_cfg.fold
     mkpath(figure_path)
 
     ##
@@ -80,7 +94,7 @@ println("running with $(nprocs() - 1) worker processes")
         end
     end
 
-    skip = 40   # downsample for legible quiver arrows — plotting all 686x856 would be unreadable
+    skip = run_cfg.skip   # downsample for legible quiver arrows (~17 x 21 arrows on either grid)
     # lengthscale = degrees of lon/lat drawn per 1 m/s
     quiver_kw(scale) = (lengthscale = 0.25, color = :black, shaftwidth = 1.5 * scale,
                         tipwidth = 5 * scale, tiplength = 6 * scale)

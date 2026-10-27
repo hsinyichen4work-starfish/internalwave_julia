@@ -33,6 +33,8 @@ Step 2 (comparison with TPXO; ATLAS = tpxo10 (default), tpxo9 or tpxo6):
     wavelength ~120-150 km for M2, ~250-300 km for K1/O1 here); the script prints the RMS
     sensitivity to the cutoff, check it before trusting the numbers.
   - comparison area: SPONGE km removed along each open boundary, TPXO-wet points; cell-area weights
+  - co-phase lines (black) in figures 1, 5, 6: ROMS low-passed alone (LCP_SD / LCP_D, no TPXO), deep
+    water only, low-passed over h >= HDEEP only (no shelf); amplitude shading and the difference panels use ROMS_bt as above
   - per constituent: RMS = sqrt(< |Z1 - Z2|^2 / 2 >), signal rms S, amplitude ratio, amplitude-
     weighted phase difference (+ = ROMS lags); RMS split into shelf (h < HSHELF) and deep water
 Output in dirout, all with suffix _<ATLAS>[_test]: ROMS_TPXO_rms.txt, ROMS_TPXO_maps.png, ROMS_TPXO_rms.png,
@@ -79,6 +81,8 @@ const INFER  = TEST ? Tuple{String, String}[] : [("k2", "s2"), ("p1", "k1"), ("n
 const SPONGE = 27.0                          # km removed along each open boundary (check the run's sponge width)
 const LC_SD  = 400.0                         # km, half-power wavelength of the low-pass, semidiurnal and higher
 const LC_D   = 800.0                         # km, diurnal
+const LCP_SD = 300.0                         # km, figures only: low-pass of ROMS alone for the co-phase lines, semidiurnal
+const LCP_D  = 600.0                         # km, figures only, diurnal
 const HSHELF = 200.0                         # m, shelf / deep-water split
 const HDEEP  = 2000.0                        # m, co-phase lines only in deeper water (figures 1, 5, 6)
 const BATHY  = [500, 1000, 2000]             # m, grey isobaths in figure 6
@@ -347,6 +351,17 @@ function gfilt(Z, lc, six = false)
     return conv2(wf .* Z, s) ./ den
 end
 lcof(c) = c in DIURNAL ? LC_D : LC_SD
+lcp(c) = c in DIURNAL ? LCP_D : LCP_SD
+## ROMS-only barotropic for the co-phase lines: low-pass over deep water only (h >= HDEEP), so neither TPXO
+## nor the shelf (different, fast-changing phase) enters; only plotted where h >= HDEEP
+const Md = M .& (hR .>= HDEEP)
+const Wdeep = Float64.(Md)
+const WdLP = Dict{Float64, Matrix{Float64}}()
+function zplot(c)
+    s = lcp(c) / 5.336 / dxkm
+    den = get!(() -> conv2(Wdeep, s), WdLP, lcp(c))
+    return conv2(Wdeep .* ZR[:, :, kc(c)], s) ./ den
+end
 
 rows = []
 LP = Dict{String, Matrix{ComplexF64}}()
@@ -393,6 +408,20 @@ for c in MAPC
     k = kc(c); (k === nothing || !haskey(TP, c)) && continue
     D = ZR[:, :, k] .- TP[c]
     @printf(io, "  %-3s %s\n", c, join([@sprintf("%5.0f: %.3f", L, srms(gfilt(D, L))) for L in (200, 300, 400, 600, 800)], "  "))
+end
+## deep-water phase gradient, plane fit G = a + b x + c y over h >= HDEEP: magnitude [deg / 100 km] and
+## direction [deg, ccw from xi]; checks whether the plot filter turns the co-phase lines
+xk = dxkm .* repeat(1:NX, 1, NY); yk = dykm .* repeat((1:NY)', NX, 1)
+function pgrad(Z)
+    zm = sum(Z[Md]); G = -rad2deg.(angle.(Z[Md] .* conj(zm)))
+    b = hcat(ones(count(Md)), xk[Md], yk[Md]) \ G
+    return 100hypot(b[2], b[3]), rad2deg(atan(b[3], b[2]))
+end
+@printf(io, "\nDeep-water (h >= %.0f m) phase gradient, plane fit: deg/100 km @ direction [deg ccw from xi]\n", HDEEP)
+for c in MAPC
+    k = kc(c); (k === nothing || !haskey(TP, c)) && continue
+    @printf(io, "  %-3s %s: %.2f @ %6.1f   ROMS raw: %.2f @ %6.1f   ROMS plot-LP (%.0f km): %.2f @ %6.1f\n", c, TPN,
+            pgrad(TP[c])..., pgrad(ZR[:, :, k])..., lcp(c), pgrad(zplot(c))...)
 end
 tab = String(take!(io)); print(tab); write(dirout * "ROMS_TPXO_rms$(FSUF).txt", tab)
 
@@ -456,8 +485,8 @@ mapsuf = "ROMS Amazon 900 m ($tlab) vs $TPLAB" * (TSIG > 0 ? ", smoothed σ = $(
 mc = [c for c in MAPC if haskey(LP, c)]
 fig = Figure(; figkw(24, 2 + 7.2length(mc))...)
 for (row, c) in enumerate(mc)
-    zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
-    Ar = abs.(zr); Gr = unw(zr); Gt = unw(zt)
+    zr = LP[c]; zt = TP[c]; zp = zplot(c); unw = gm_unw(zp)
+    Ar = abs.(zr); Gr = unw(zp); Gt = unw(zt)
     dA = nanout(Ar .- abs.(zt)); dG = nanout(-rad2deg.(angle.(zr .* conj.(zt))))
     dAm = max(q(abs.(dA), 0.99), 0.05); dGm = max(q(abs.(dG), 0.99), 1.0)
     dl, lev = phase_lev(Gr)
@@ -474,9 +503,10 @@ for (row, c) in enumerate(mc)
     h3 = heatmap!(a3, lonv, latv, rg(dG); colormap = :balance, colorrange = (-dGm, dGm))
     Colorbar(fig[row, 6], h3; height = Relative(0.8))
     foreach(deco!, (a1, a2, a3))
+    contour!(a1, lonv, latv, hmap; levels = [HDEEP], color = :gray50, linewidth = 0.6, linestyle = :dash)
 end
 Label(fig[0, 1:6], "$mapsuf\nROMS barotropic = $(TPN) + low-pass(ROMS - $(TPN)),\nhalf power at $(Int(LC_SD)) km (semidiurnal), $(Int(LC_D)) km (diurnal).\n" *
-      "Left: co-phase lines ROMS black, $(TPN) orange dashed; thick black: $(Int(HSHELF)) m isobath;\ndotted box: comparison area; grey: model domain.", fontsize = 13, tellwidth = false)
+      "Left: co-phase lines ROMS low-passed alone ($(Int(LCP_SD)) / $(Int(LCP_D)) km) black, $(TPN) orange dashed;\nthick black: $(Int(HSHELF)) m isobath, grey dashed: $(Int(HDEEP)) m;\ndotted box: comparison area; grey: model domain.", fontsize = 13, tellwidth = false)
 colgap!(fig.layout, 6); rowgap!(fig.layout, 4)
 figsave(dirout * "ROMS_TPXO_maps$(FSUF).png", fig)
 
@@ -533,28 +563,29 @@ figsave(dirout * "ROMS_TPXO_rms_maps$(FSUF).png", fig4)
 ##           and TPXO (dashed); phase unwrapped about the area mean, labels mod 360
 fig5 = Figure(; figkw(22, 24)...)
 for (n, c) in enumerate(mc)
-    zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
-    Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
+    zr = LP[c]; zt = TP[c]; zp = zplot(c); unw = gm_unw(zp)
+    Gr = unw(zp); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
     dl, lev = phase_lev(Gr)
     row, col = fldmod1(n, 2)
     a5 = Axis(fig5[row, 2col - 1]; title = "$c: amplitude [cm]\nGreenwich phase every $(dl)° (h > $(Int(HDEEP)) m)", xlabel = "longitude", ylabel = "latitude",
               mapax..., xlabelvisible = row == 2, xticklabelsvisible = row == 2, ylabelvisible = col == 1, yticklabelsvisible = col == 1)
     h5 = heatmap!(a5, lonv, latv, rg(Ar); colormap = :Blues, colorrange = (0, q(Ar, 0.999)))
     deco!(a5; box = false)
+    contour!(a5, lonv, latv, hmap; levels = [HDEEP], color = :gray50, linewidth = 0.6, linestyle = :dash)
     contour!(a5, lonv, latv, deep(rg(Gt)); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
     contour!(a5, lonv, latv, deep(rg(Gr)); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 10,
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
     Colorbar(fig5[row, 2col], h5; label = "amplitude [cm]", height = Relative(0.8))
 end
-Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\nROMS = $(TPN) + low-pass(ROMS - $(TPN)) (black, labelled);\n$(TPN) co-phase lines dashed orange; thick black: $(Int(HSHELF)) m isobath",
+Label(fig5[0, 1:4], "Barotropic co-tidal maps, $mapsuf\namplitude: ROMS = $(TPN) + low-pass(ROMS - $(TPN));\nco-phase lines: ROMS low-passed alone, $(Int(LCP_SD)) / $(Int(LCP_D)) km (black, labelled);\n$(TPN) co-phase lines dashed orange; thick black: $(Int(HSHELF)) m isobath; grey dashed: $(Int(HDEEP)) m",
       fontsize = 11, tellwidth = false)
 colgap!(fig5.layout, 6); rowgap!(fig5.layout, 6)
 figsave(dirout * "ROMS_TPXO_cotidal$(FSUF).png", fig5)
 
 ## figure 6: M2, (left) co-tidal map as in figure 5, (right) amplitude ROMS - TPXO (barotropic ROMS, as in figure 1)
 let c = "M2"
-    zr = LP[c]; zt = TP[c]; unw = gm_unw(zr)
-    Gr = unw(zr); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
+    zr = LP[c]; zt = TP[c]; zp = zplot(c); unw = gm_unw(zp)
+    Gr = unw(zp); Gt = nanout(unw(zt)); Ar = nanout(abs.(zr))
     dA = nanout(abs.(zr) .- abs.(zt)); dAm = max(q(abs.(dA), 0.99), 0.05)
     dAc = filter(isfinite, dA[M])                                       # comparison area
     dl, lev = phase_lev(Gr)                                             # co-phase lines in deep water only
@@ -563,6 +594,7 @@ let c = "M2"
     h6 = heatmap!(a6, lonv, latv, rg(Ar); colormap = Reverse(:Spectral), colorrange = (0, q(Ar, 0.999)))
     contour!(a6, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
     deco!(a6; box = false)
+    contour!(a6, lonv, latv, hmap; levels = [HDEEP], color = :gray50, linewidth = 0.6, linestyle = :dash)
     contour!(a6, lonv, latv, deep(rg(Gt)); levels = lev, color = :darkorange, linewidth = 0.9, linestyle = :dash)
     contour!(a6, lonv, latv, deep(rg(Gr)); levels = lev, color = :black, linewidth = 0.9, labels = true, labelsize = 10,
              labelformatter = l -> string.(round.(Int, mod.(l, 360))))
@@ -573,8 +605,8 @@ let c = "M2"
     contour!(b6, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
     deco!(b6)
     Colorbar(fig6[1, 4], k6; label = "ROMS - $(TPN) amplitude [cm]", height = Relative(0.8))
-    Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: ROMS co-phase lines black (labelled), $(TPN) dashed orange. " *
-          "Right: |Z_ROMS| - |Z_$(TPN)|.\nDotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath; grey: $(join(BATHY, ", ")) m isobaths",
+    Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: co-phase lines ROMS low-passed alone ($(Int(LCP_SD)) km, black, labelled), $(TPN) dashed orange. " *
+          "Right: |Z_ROMS| - |Z_$(TPN)|.\nDotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath; grey dashed: $(Int(HDEEP)) m; grey: $(join(BATHY, ", ")) m isobaths",
           fontsize = 11, tellwidth = false)
     colgap!(fig6.layout, 6)
     figsave(dirout * "ROMS_TPXO_M2_cotidal_dA$(FSUF).png", fig6)
