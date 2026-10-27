@@ -9,15 +9,17 @@
 include("/home/hchen54/internalwave_julia/make_run_folder/folder_make.jl")
 
 ##
-title = "Amazon shelf internal wave simulation 1 month - 900m pure orlanski"
-fold_name = "amazon_900m_pure_or"
-TAG_USE = "900m_1mon_pur_or"
+title = "Amazon shelf internal wave simulation 3 month - 900m pure orlanski"
+fold_name = "amazon_900m_pure_or_full"
+TAG_USE = "900m_3mon_pur_or"
 dyn_bry = false   # true: dynamic boundary (obc_tuning + dbry files); false: pure Orlanski
 
 NP_XI = 8; NP_ETA = 8; node = 1; cpn = 64; do_dia = true
 NP_XI * NP_ETA == node * cpn || error("tiled and node mismatch!!!")
 
-time_stepping = (NTIMES = 28800, dt = 90, NDTFAST = 45,
+# full bry/frc record: 2022-08-24 00:00 -> 2022-11-30 00:00 = 98 days (= 94080 steps,
+# same as amazon_900m_3mon_1008); 1 mon took ~10.5 h, so ~34 h fits in 48 h
+time_stepping = (NTIMES = 98 * 86400 ÷ 90, dt = 90, NDTFAST = 45,
                  rst = 86400, his = 3600, avg = 3600, dia = 3600)   # dia = his
 Scoord = (THETA_S = 6, THETA_B = 3, hc = 250)
 grid = (LLm = 684, MMm = 854, N = 128)   # 900m grid
@@ -29,7 +31,7 @@ input_filenames = (grd = "roms_grd_900m",
                    dbry = "roms_dbry_flux_900m",
                    frc = "roms_frc_900m")
 input_folder = (grd = "grid", ini = "ini", bry = "bry", frc = "frc")
-filename = "amazon_1mon_pur_or.in"
+filename = "amazon_3mon_pur_or.in"
 
 projectpath = "/expanse/lustre/projects/uso101/hchen54/"
 output_fold = projectpath * fold_name
