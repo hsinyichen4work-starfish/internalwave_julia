@@ -22,16 +22,26 @@
 #   julia mooring_NCOM_extraction.jl M2           -> only M2   (same as: ... 3)
 #   julia mooring_NCOM_extraction.jl M1 CPIES4    -> M1 and CPIES4
 #   julia mooring_NCOM_extraction.jl transect     -> only the transect (same as: ... 15)
+#   julia mooring_NCOM_extraction.jl 2700m M2     -> M2 from the 2700 m grid (900m / 2700m can be
+#                                                    combined with any of the above; default: ncom_res)
 # or under a SLURM array job (#SBATCH --array=1-15) the task id picks the mooring
-# (15 = the transect).
+# (15 = the transect); there, pass 900m / 2700m as the only argument, or set ncom_res below.
 
 using Distributed
 
 n_workers = 4   # moorings run at the same time; mostly limited by disk reads, not CPU
 
+# NCOM grid: "900m" (ohgrd_2) or "2700m" (ohgrd_1); a 900m / 2700m command-line argument overrides it
+ncom_res  = "900m"
+res_opts  = ("900m", "2700m")
+res_args  = filter(in(res_opts), ARGS)
+isempty(res_args) || (ncom_res = last(res_args))
+moor_args = filter(!in(res_opts), ARGS)   # the remaining arguments pick the moorings
+println("NCOM grid: $ncom_res")
+
 # number of moorings in this run is known from the command line already:
 # one mooring (one argument or a SLURM array task) runs on the main process only
-n_moor = !isempty(ARGS) ? length(ARGS) : haskey(ENV, "SLURM_ARRAY_TASK_ID") ? 1 : typemax(Int)
+n_moor = !isempty(moor_args) ? length(moor_args) : haskey(ENV, "SLURM_ARRAY_TASK_ID") ? 1 : typemax(Int)
 if n_moor > 1 && nprocs() == 1
     addprocs(min(n_workers, n_moor))
 end
@@ -45,15 +55,24 @@ println("running with $(nworkers()) worker process(es)")
 # workers always uses the freshly included module (and picks up edits to interp_bry.jl).
 @everywhere include("/home/hsinyi/Documents/Julia/function/interp_bry.jl")
 @everywhere include("/home/hsinyi/Documents/Julia/function/mooring_transect.jl")
+@everywhere ncom_res = $ncom_res
 
 @everywhere begin
 
     # -----------------------------------------------------------------------
     # User input (needed on every worker)
     # -----------------------------------------------------------------------
-    parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"
-    datadir     = "/home/hsinyi/roms_data/NCOM_DATA_NC/"     # yyyymmddHH_{ts,uv,ssh}.nc
-    outdir      = "/home/hsinyi/roms_data/NCOM_mooring/"     # one file per mooring: NCOM_<name>.nc
+    if ncom_res == "900m"
+        parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"
+        datadir     = "/home/hsinyi/roms_data/NCOM_DATA_NC/"          # yyyymmddHH_{ts,uv,ssh}.nc
+        outdir      = "/home/hsinyi/roms_data/NCOM_mooring/"          # one file per mooring: NCOM_<name>.nc
+    elseif ncom_res == "2700m"
+        parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_1.nc"
+        datadir     = "/home/hsinyi/roms_data/NCOM_DATA_NC_2700/"
+        outdir      = "/home/hsinyi/roms_data/NCOM_mooring_2700/"
+    else
+        error("Unknown ncom_res '$ncom_res'; choose 900m or 2700m")
+    end
 
     # output depths (m, negative down, must be ASCENDING for get_1d_coef);
     # depths below the local seafloor are set to NaN
@@ -332,7 +351,7 @@ function find_mooring(a, names)
     1 <= k <= length(names) || error("Unknown mooring '$a'; choose 1-$(length(names)) or one of: $(join(names, ", "))")
     return k
 end
-moor_sel = !isempty(ARGS)                        ? [find_mooring(a, moor_name) for a in ARGS] :
+moor_sel = !isempty(moor_args)                   ? [find_mooring(a, moor_name) for a in moor_args] :
            haskey(ENV, "SLURM_ARRAY_TASK_ID")    ? [find_mooring(ENV["SLURM_ARRAY_TASK_ID"], moor_name)] :
                                                    collect(eachindex(moor_name))
 println("Moorings in this run : ", join(moor_name[moor_sel], ", "))
