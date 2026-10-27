@@ -23,8 +23,12 @@ include("/home/hchen54/internalwave_julia/make_run_folder/folder_make.jl")
 forcing = "era5"   # "era5": frc_era5/roms_era5_frc_2700m_* (era5_frc_make.py); "ncom": frc/roms_cmems_frc_2700m_* (NCOM/NAVGEM)
 frc_src = Dict("era5" => (folder = "frc_era5", prefix = "roms_era5_frc_2700m", label = "ERA5"),
                "ncom" => (folder = "frc", prefix = "roms_cmems_frc_2700m", label = "NCOM"))[forcing]
-title = "Amazon shelf internal wave simulation - 2700m CMEMS test, $(frc_src.label) forcing, TPXO10 tides, pure orlanski"
-fold_name = "amazon_2700m_cmems_test"
+# "test": 2022-08-24 -> 09-30 (37 days); "3mon": 2022-08-24 -> 11-30 (98 days)
+run_len = "3mon"
+run_set = Dict("test" => (fold = "amazon_2700m_cmems_test", days = 37, tide = "roms_tide_2700m_TPXO10v2"),
+               "3mon" => (fold = "amazon_2700m_cmems_3mon", days = 98, tide = "roms_tide_2700m_TPXO10v2_0824_1130"))[run_len]
+fold_name = run_set.fold
+title = "Amazon shelf internal wave simulation - 2700m CMEMS $(run_len), $(frc_src.label) forcing, TPXO10 tides, pure orlanski"
 TAG_USE = "2700m_cmems"
 dyn_bry = false   # no dynamic boundary flux files for CMEMS -> pure Orlanski
 
@@ -32,8 +36,8 @@ NP_XI = 8; NP_ETA = 8; node = 1; cpn = 64; do_dia = true
 NP_XI * NP_ETA == node * cpn || error("tiled and node mismatch!!!")
 
 # same barotropic/baroclinic CFL as the 900 m runs (dt 90, NDTFAST 45) at 3x dx;
-# 2022-08-24 00:00 -> 2022-09-30 00:00 = 37 days
-time_stepping = (NTIMES = 37 * 86400 ÷ 180, dt = 180, NDTFAST = 30,
+# run_set.days from 2022-08-24 00:00
+time_stepping = (NTIMES = run_set.days * 86400 ÷ 180, dt = 180, NDTFAST = 30,
                  rst = 86400, his = 3600, avg = 3600, dia = 3600)   # dia = his
 Scoord = (THETA_S = 6, THETA_B = 3, hc = 250)
 grid = (LLm = 376, MMm = 507, N = 128)   # 2700m grid (378 x 509 rho points)
@@ -46,7 +50,7 @@ input_filenames = (grd = "roms_cmems_grd_2700m",
                    dbry = "roms_dbry_flux_2700m",   # unused (dyn_bry = false)
                    frc = frc_src.prefix)
 input_folder = (grd = "grid", ini = "ini", bry = "bry", frc = frc_src.folder)
-tide_folder = "tide"; tide_file = "roms_tide_2700m_TPXO10v2"
+tide_folder = "tide"; tide_file = run_set.tide
 ntides = 10
 filename = "amazon_2700m_cmems.in"
 

@@ -39,12 +39,12 @@ from pyTMD.predict import _constituent_parameters
 ## settings
 cons = ["m2", "s2", "n2", "k2", "k1", "o1", "p1", "q1", "mf", "mm"]   # ntides = 10 in tides.opt
 t_start = dt.datetime(2022, 8, 24)     # run start = ini ocean_time
-t_end = dt.datetime(2022, 10, 1)
+t_end = dt.datetime(2022, 12, 1)       # 37-day test run: 2022-10-01
 t_epoch = dt.datetime(1994, 1, 1)      # model time origin (ocean_time / bry_time)
 
 tpxo = "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO10a_v2/1_30deg/TPXO10_atlas_v2_nc/"
 grdfile = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_cmems_grd_2700m.nc"
-outfile = "/expanse/lustre/projects/uso101/hchen54/input_cmems/tide/roms_tide_2700m_TPXO10v2.nc"
+outfile = "/expanse/lustre/projects/uso101/hchen54/input_cmems/tide/roms_tide_2700m_TPXO10v2_0824_1130.nc"   # 37-day test run: roms_tide_2700m_TPXO10v2.nc
 pad = 1.0                              # deg of TPXO around the grid
 
 ## ROMS grid (eta, xi); lon_rho is 0..360
