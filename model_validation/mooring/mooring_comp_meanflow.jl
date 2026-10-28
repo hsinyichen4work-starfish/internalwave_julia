@@ -110,6 +110,7 @@ tlim  = (DateTime(2022, 8, 24), DateTime(2022, 12, 1))   # records outside this 
 t_ref = DateTime(1994, 1, 1)                             # ROMS ocean_time is in seconds since t_ref
 
 intime(t) = findall(tlim[1] .<= t .<= tlim[2])
+salt_range = (34.5, 37.5)   # French CTD salinity outside this (psu) is treated as a bad sample
 rd(ds, name) = Float64.(nomissing(ds[name][:, :], NaN))   # (nz, nt) with NaN in the gaps
 
 # (nz, nt) field f on levels z (vector, or (nz, nt) when the levels move; ascending in every column)
@@ -172,6 +173,11 @@ function load_moor(s::Source, moor, zg)
             nomissing(ds["time"][:]), flip(-rd(ds, "depth")),
             flip(rd(ds, "conservative temperature")), flip(rd(ds, "absolute salinity")), flip(rd(ds, "salinity"))
         end
+        # despike: a few single CTD samples have bad salinity (down to 26 psu at ~250 m on 10-02); drop T and S
+        # of those samples (CT/SA are derived from it too). to_zgrid then interpolates over the gap.
+        bad = .!(salt_range[1] .<= salt .<= salt_range[2]) .& .!isnan.(salt)
+        salt[bad] .= NaN; CT[bad] .= NaN; SA[bad] .= NaN
+        println("french CTD: removed $(count(bad)) samples with salinity outside $salt_range psu")
         # ADCP: 32 bins, bin 1 the deepest, bin depth (positive down) moves with the mooring
         adcp_time, adcp_z, u, v = NCDataset(joinpath(s.path, "adcp_newalgo_raw_corr_angle.nc")) do ds
             nomissing(ds["time"][:]), -rd(ds, "z"), rd(ds, "u"), rd(ds, "v")
