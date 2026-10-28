@@ -31,11 +31,11 @@ ndomx = 2; ndomy = 2     # -> chunking needed to avoid OOM.
 dating = Date(2022, 8, 22):Day(1):Date(2022, 11, 30)
 
 ## path settings
-parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_2.nc"
+parent_grid = "/home/mbui/ModelOutput/NCOM/grid/ohgrd_1.nc"   # nest 1 (2700 m): ohgrd_2 does not cover the larger domain
 parent_data_path = "/home/mbui/ModelOutput/NCOM/data/"
 par_name = "2022082400"; ini_par_path = parent_data_path * par_name
-nc_path_ini_bry = "/home/hsinyi/roms_data/NCOM_DATA_NC/"
-nc_path_frc = "/home/hsinyi/roms_data/NCOM_DATA_NC/"
+nc_path_ini_bry = "/home/hsinyi/roms_data/NCOM_DATA_NC_2700/"
+nc_path_frc = "/home/hsinyi/roms_data/NCOM_DATA_NC_2700/"
 
 path_figure = nothing   # no grid figures
 # path_figure = "/home/hsinyi/figure/20260903_300_test/"; mkpath(path_figure)
