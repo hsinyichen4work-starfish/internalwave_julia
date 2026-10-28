@@ -14,6 +14,7 @@
 #        sbatch --export=ALL,TEST=true julia_tidalcomp.sh   first 30 days, M2 S2 N2 K1 O1
 #        add REFIT=true to redo the harmonic fit instead of reusing the saved constants
 #        sbatch --export=ALL,SMOOTH=true julia_tidalcomp.sh   smooth the 1/30 deg atlas (sigma 20 km), outputs _s20
+#        sbatch --export=ALL,ATLAS=fes julia_tidalcomp.sh     compare with FES2022b instead of TPXO10 (outputs _fes)
 set -o pipefail
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia

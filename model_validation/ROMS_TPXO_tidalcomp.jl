@@ -8,19 +8,23 @@ Step 1 (harmonic fit, cached): hourly zeta from roms_his.*.nc, 2022-08-24 .. 202
   accumulated while streaming the files (zeta only, ~2.3 MB per record).
   - timeline de-duplicated by hour; ocean_time = seconds since 1994-01-01; SPINUP days dropped
   - model: mean + linear trend + FIT constituents; f(t), u(t), V(t) every hour (pyTMD, OTIS/TPXO
-    conventions, latitude independent, via function/nodal_args.py) -> nodal-free A, G
+    conventions, or FES conventions for ATLAS = fes; latitude independent, via function/nodal_args.py) -> nodal-free A, G
   - ~95 days do not separate K2 from S2, P1 from K1, NU2 from N2 (Rayleigh 182-206 d): these are
     inferred, Z_K2 = R Z_S2 etc., with R the TPXO complex ratio (area mean over the interior),
     and are part of the S2/K1/N2 basis functions (t_tide-like inference)
   - convention (TPXO): eta = f A cos(V + u - G), Z = A exp(-iG) = hRe + i hIm
   Output: dirout/ROMS_<RUN>_harmconst_<ATLAS>[_test].nc (R depends on the atlas, so one fit per
   atlas). Delete it, or REFIT=true, to fit again.
-Step 2 (comparison with TPXO; ATLAS = tpxo10 (default), tpxo9 or tpxo6):
+Step 2 (comparison with the atlas; ATLAS = tpxo10 (default), tpxo9, tpxo6 or fes):
   - tpxo10 / tpxo9: TPXO10-atlas v2 / TPXO9-atlas v2, 1/30 deg netCDF (h_<con>_*_atlas_30_v2.nc,
     hRe/hIm int mm on z nodes). Constituents the atlas lacks (L2, J1, OO1, NU2) come from TPXO10 v2a
     1/6 deg (OTIS binary) and are compared over the 1/6 deg-wet points only (src 1/6 in the table);
     an inference ratio with a 1/6 deg constituent takes both from 1/6 deg.
     tpxo6: everything from TPXO10 v2a 1/6 deg (the previous setup).
+    fes: FES2022b ocean_tide_extrapolated (AVISO), 1/30 deg netCDF <con>_fes2022.nc, amplitude [cm] and
+    phase [deg] (float, so no smoothing needed); wet = native-ocean nodes of mask_fes2022B.nc (0); OO1,
+    missing from FES, comes from TPXO10 v2a 1/6 deg; nodal f, u with the FES conventions (own fit,
+    _fes); the atlas-to-atlas reference is FES vs TPXO10-atlas.
   - SMOOTH (default false; true = sigma 20 km) or TSIG (km, overrides): Gaussian smoothing of the small 1/30 deg constituents, which the atlas
     stores in whole mm (terraced phase); outputs then carry _s<TSIG>
   - the other 1/30 deg atlas gives an atlas-to-atlas RMS (TPXO9 vs TPXO10) as a reference floor
@@ -45,6 +49,7 @@ Run (batch: sbatch_files/julia_tidalcomp.sh):
   TEST=true julia -t 8 ROMS_TPXO_tidalcomp.jl   # first 30 days, M2 S2 N2 K1 O1
   julia -t 8 ROMS_TPXO_tidalcomp.jl             # full record
   ATLAS=tpxo6 julia -t 8 ROMS_TPXO_tidalcomp.jl # TPXO10 v2a 1/6 deg only
+  ATLAS=fes julia -t 8 ROMS_TPXO_tidalcomp.jl   # FES2022b 1/30 deg
   SMOOTH=true julia -t 8 ROMS_TPXO_tidalcomp.jl # 1/30 deg atlas smoothed, sigma 20 km (outputs _s20)
 =#
 
@@ -56,6 +61,7 @@ const fgrd   = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m
 const fT6    = "/expanse/lustre/projects/uso101/hchen54/data_upload/h_tpxo10.v2a"
 const dirT30 = Dict("tpxo10" => "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO10a_v2/1_30deg/TPXO10_atlas_v2_nc/",
                     "tpxo9"  => "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO9_atlas_nc-selected/")
+const dirFES = "/expanse/lustre/projects/uso101/hchen54/input_cmems/fes2022/ocean_tide_extrapolated/"
 const dirout = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/tidal_comp/"
 const PY     = "/home/hchen54/.venvs/utide/bin/python"
 const NODPY  = "/home/hchen54/internalwave_julia/function/nodal_args.py"
@@ -64,15 +70,17 @@ const TEST   = get(ENV, "TEST", "false") == "true"
 const REFIT  = get(ENV, "REFIT", "false") == "true"
 const SUF    = TEST ? "_test" : ""
 const ATLAS  = lowercase(get(ENV, "ATLAS", "tpxo10"))
-ATLAS in ("tpxo10", "tpxo9", "tpxo6") || error("ATLAS = tpxo10, tpxo9 or tpxo6")
+ATLAS in ("tpxo10", "tpxo9", "tpxo6", "fes") || error("ATLAS = tpxo10, tpxo9, tpxo6 or fes")
 const SMOOTH = get(ENV, "SMOOTH", "false") == "true"                  # switch: true = smooth the 1/30 deg atlas with sigma 20 km
-const TSIG   = ATLAS == "tpxo6" ? 0.0 : parse(Float64, get(ENV, "TSIG", SMOOTH ? "20" : "0"))   # km, Gaussian sigma (0: off)
+const TSIG   = ATLAS in ("tpxo6", "fes") ? 0.0 : parse(Float64, get(ENV, "TSIG", SMOOTH ? "20" : "0"))   # km, Gaussian sigma (0: off)
 const TSMA   = 10.0                                                    # cm, smooth only constituents with mean |Z| below this
 const SMOOTHED = Set{String}()
 const OSUF   = "_$(ATLAS)$(SUF)"
 const FSUF   = OSUF * (TSIG > 0 ? "_s$(round(Int, TSIG))" : "")       # outputs of step 2
-const TPN    = ATLAS == "tpxo9" ? "TPXO9" : "TPXO10"            # name in labels
-const TPLAB  = Dict("tpxo10" => "TPXO10-atlas v2 (1/30°)", "tpxo9" => "TPXO9-atlas v2 (1/30°)", "tpxo6" => "TPXO10 v2a (1/6°)")[ATLAS]
+const TPN    = Dict("tpxo10" => "TPXO10", "tpxo9" => "TPXO9", "tpxo6" => "TPXO10", "fes" => "FES2022")[ATLAS]   # name in labels
+const TPLAB  = Dict("tpxo10" => "TPXO10-atlas v2 (1/30°)", "tpxo9" => "TPXO9-atlas v2 (1/30°)", "tpxo6" => "TPXO10 v2a (1/6°)",
+                    "fes" => "FES2022b (1/30°)")[ATLAS]
+const NODAL  = ATLAS == "fes" ? "FES" : "OTIS"                  # pyTMD nodal-correction convention of the atlas
 const TREF   = DateTime(1994, 1, 1)          # ocean_time reference ("Time since 1994/01/01")
 const SPINUP = 3.0                           # days dropped at the start of the run
 const FIT    = TEST ? ["m2", "s2", "n2", "k1", "o1"] :
@@ -151,14 +159,17 @@ end
 ## --- TPXO 1/30 deg atlas, netCDF h_<con>_<ver>_atlas_30_v2.nc: hRe, hIm (nx, ny) int [mm] on z nodes,
 ##     uniform lon 0-360 / lat -90..90 (Julia order ny, nx); only the window around the ROMS grid is read. Same bilinear
 ##     interpolation [cm] and wet test as otis_h.
+##     ver = "fes": FES2022b <con>_fes2022.nc, amplitude [cm] / phase [deg] (Julia order nx, ny) on the same kind of
+##     grid (lon, lat); Z = A exp(-iG); wet = all four surrounding nodes native ocean in mask_fes2022B.nc.
 ##     TSIG > 0: the atlas stores whole mm, so small constituents are terraced (K1/O1: ~0.75 deg phase
 ##     steps, 10-30 distinct values over the deep basin). Constituents with window-mean |Z| < TSMA are
 ##     smoothed on the atlas grid with a Gaussian of sigma TSIG km (normalised convolution over ocean
 ##     nodes) before the interpolation.
 function atlas_h(dir, ver, cons)
     out = Dict{String, Matrix{ComplexF64}}(); wet = trues(NX, NY)
-    fn(c) = dir * "h_$(lowercase(c))_$(ver)_atlas_30_v2.nc"
-    lonz, latz = NCDataset(fn("m2")) do ds; ds["lon_z"][:], ds["lat_z"][:]; end
+    fes = ver == "fes"
+    fn(c) = fes ? dir * "$(lowercase(c))_fes2022.nc" : dir * "h_$(lowercase(c))_$(ver)_atlas_30_v2.nc"
+    lonz, latz = NCDataset(fn("m2")) do ds; fes ? (ds["lon"][:], ds["lat"][:]) : (ds["lon_z"][:], ds["lat_z"][:]); end
     sc = TSIG / (111.19 * (latz[2] - latz[1]))                         # sigma in atlas cells
     mg = 1 + ceil(Int, 4sc)                                             # margin so the kernel sees real data
     ia = searchsortedlast(lonz, minimum(lonR)) - mg; ib = searchsortedfirst(lonz, maximum(lonR)) + mg
@@ -169,8 +180,13 @@ function atlas_h(dir, ver, cons)
     for c in cons
         isfile(fn(c)) || continue
         z = NCDataset(fn(c)) do ds
-            rd(v) = 0.1 .* permutedims(Float64.(ds[v].var[ja:jb, ia:ib]))     # stored (ny, nx) in Julia order
-            complex.(rd("hRe"), rd("hIm"))
+            if fes                                                       # stored (nx, ny); land fill ~1.8e19 -> 0
+                a = Float64.(ds["amplitude"].var[ia:ib, ja:jb]); g = Float64.(ds["phase"].var[ia:ib, ja:jb])
+                ifelse.(a .< 1e10, a .* cis.(-deg2rad.(g)), 0.0im)
+            else
+                rd(v) = 0.1 .* permutedims(Float64.(ds[v].var[ja:jb, ia:ib]))     # stored (ny, nx) in Julia order
+                complex.(rd("hRe"), rd("hIm"))
+            end
         end
         if TSIG > 0 && mean(abs, z) < TSMA
             wz = Float64.(.!iszero.(z))
@@ -179,9 +195,13 @@ function atlas_h(dir, ver, cons)
         end
         out[uppercase(c)] = [(1 - wx[p]) * (1 - wy[p]) * z[i0[p], j0[p]] + wx[p] * (1 - wy[p]) * z[i0[p] + 1, j0[p]] +
                              (1 - wx[p]) * wy[p] * z[i0[p], j0[p] + 1] + wx[p] * wy[p] * z[i0[p] + 1, j0[p] + 1] for p in CartesianIndices(lonR)]
-        if lowercase(c) == "m2"
+        if lowercase(c) == "m2" && !fes
             wet .= [all(!iszero, (z[i0[p], j0[p]], z[i0[p] + 1, j0[p]], z[i0[p], j0[p] + 1], z[i0[p] + 1, j0[p] + 1])) for p in CartesianIndices(lonR)]
         end
+    end
+    if fes                                                               # extrapolated files: land test from the mask
+        oc = NCDataset(ds -> ds["mask"].var[ia:ib, ja:jb] .== 0, dir * "mask_fes2022B.nc")
+        wet .= [oc[i0[p], j0[p]] && oc[i0[p] + 1, j0[p]] && oc[i0[p], j0[p] + 1] && oc[i0[p] + 1, j0[p] + 1] for p in CartesianIndices(lonR)]
     end
     return out, wet
 end
@@ -193,12 +213,12 @@ if ATLAS == "tpxo6"
     TP, WET = TP6, WET6
     SRC = Dict(c => "1/6" for c in keys(TP))
 else
-    TPa, WET = atlas_h(dirT30[ATLAS], ATLAS, ALLC)
+    TPa, WET = atlas_h(ATLAS == "fes" ? dirFES : dirT30[ATLAS], ATLAS, ALLC)
     SRC = merge(Dict(c => "1/6" for c in keys(TP6)), Dict(c => "1/30" for c in keys(TPa)))
     TP = merge(TP6, TPa)
     @printf("%s: %s; %.2f%% of the rho points next to land; from 1/6 deg: %s\n", TPLAB, join(sort(collect(keys(TPa))), " "),
             100 * (1 - mean(WET)), join(sort([c for (c, v) in SRC if v == "1/6"]), " "))
-    ## the other 1/30 deg atlas, for the atlas-to-atlas RMS
+    ## the other 1/30 deg atlas (TPXO9 for TPXO10; TPXO10 for TPXO9 and FES), for the atlas-to-atlas RMS
     TSIG > 0 && @printf("1/30 deg atlas smoothed, Gaussian sigma %.0f km: %s\n", TSIG, join(sort(collect(SMOOTHED)), " "))
     AX = ATLAS == "tpxo10" ? "tpxo9" : "tpxo10"
     TPX, WETX = atlas_h(dirT30[AX], AX, ALLC)
@@ -244,14 +264,14 @@ function run_fit()
     @printf("timeline: %d records, %s .. %s, %d gaps (largest %d h), dt %.0f-%.0f s\n", nt, tdate(tsec[1]), tdate(tsec[end]),
             count(>(1), diff(hs)), maximum(diff(hs)), extrema(diff(tsec))...); flush(stdout)
 
-    ## nodal arguments (pyTMD, OTIS conventions); times passed as seconds since 2000-01-01
+    ## nodal arguments (pyTMD, NODAL conventions: OTIS, or FES for ATLAS = fes); times passed as seconds since 2000-01-01
     t2000 = tsec .- Dates.value(Second(DateTime(2000) - TREF))
     ftim = dirout * "times$(SUF).nc"; fnod = dirout * "nodal_args$(SUF).nc"
     isfile(ftim) && rm(ftim)
     NCDataset(ftim, "c"; format = :netcdf3_64bit_offset) do ds
         defDim(ds, "time", nt); defVar(ds, "t", t2000, ("time",))
     end
-    run(`$PY $NODPY $ftim $fnod $(join(ALLC, ","))`)
+    run(`$PY $NODPY $ftim $fnod $(join(ALLC, ",")) $NODAL`)
     Gd, pud, pfd, pf_c, pu_c = NCDataset(fnod) do nd
         permutedims(nd["G"][:, :]), permutedims(nd["pu"][:, :]), permutedims(nd["pf"][:, :]), vec(nd["pf_c"][:, 1]), vec(nd["pu_c"][:, 1])
     end
@@ -303,7 +323,7 @@ function run_fit()
     NCDataset(fhc, "c") do ds
         defDim(ds, "xi_rho", NX); defDim(ds, "eta_rho", NY); defDim(ds, "con", KA)
         ds.attrib["title"] = "Harmonic constants of hourly SSH, ROMS Amazon 900 m, $(Date(tdate(tsec[1]))) to $(Date(tdate(tsec[end])))"
-        ds.attrib["convention"] = "eta = f A cos(V + u - G); Z = A exp(-iG) (TPXO hRe + i hIm); G = Greenwich phase lag [deg], V, f, u from pyTMD (OTIS)"
+        ds.attrib["convention"] = "eta = f A cos(V + u - G); Z = A exp(-iG) (TPXO hRe + i hIm); G = Greenwich phase lag [deg], V, f, u from pyTMD ($NODAL)"
         ds.attrib["model"] = "mean + linear trend + constituents, ordinary least squares, f(t), u(t), V(t) hourly"
         ds.attrib["inferred"] = join(["$(uppercase(ci)) = R $(uppercase(cb)) (R from $(SRC[uppercase(ci)] == "1/6" || SRC[uppercase(cb)] == "1/6" ? "TPXO10 v2a 1/6 deg" : TPLAB))" for (ci, cb) in INFER], "; ")
         ds.attrib["records"] = nt; ds.attrib["t_start"] = string(tdate(tsec[1])); ds.attrib["t_end"] = string(tdate(tsec[end]))
@@ -384,15 +404,16 @@ for (k, c) in enumerate(CON)
 end
 
 io = IOBuffer()
-@printf(io, "ROMS Amazon 900 m (%s, hourly zeta) vs %s; comparison area: %.0f km sponge removed, TPXO-wet points (%d)\n", tlab, TPLAB, SPONGE, count(M))
-@printf(io, "ROMS_bt = TPXO + LP(ROMS - TPXO), LP Gaussian half power at %.0f km (semidiurnal and higher) / %.0f km (diurnal)\n", LC_SD, LC_D)
-@printf(io, "RMS = sqrt(<|dZ|^2/2>) [cm]; S = TPXO signal rms; ratio = <A_ROMS>/<A_TPXO>; dG = ROMS - TPXO [deg], + = ROMS lags\n")
-@printf(io, "shelf: h < %.0f m, deep: h >= %.0f m; RMSfull: ROMS unfiltered; RMS_lpR: ROMS alone low-passed; Tlp-raw: rms change of TPXO by the low-pass;\n", HSHELF, HSHELF)
-@printf(io, "IT: rms of coherent internal-tide SSH (ROMS - ROMS_bt); A_err: median white-noise error of the ROMS amplitude; * inferred from TPXO ratio\n")
+@printf(io, "ROMS Amazon 900 m (%s, hourly zeta) vs %s; comparison area: %.0f km sponge removed, atlas-wet points (%d)\n", tlab, TPLAB, SPONGE, count(M))
+@printf(io, "ROMS_bt = %s + LP(ROMS - %s), LP Gaussian half power at %.0f km (semidiurnal and higher) / %.0f km (diurnal)\n", TPN, TPN, LC_SD, LC_D)
+@printf(io, "RMS = sqrt(<|dZ|^2/2>) [cm]; S = atlas signal rms; ratio = <A_ROMS>/<A_atlas>; dG = ROMS - atlas [deg], + = ROMS lags\n")
+@printf(io, "shelf: h < %.0f m, deep: h >= %.0f m; RMSfull: ROMS unfiltered; RMS_lpR: ROMS alone low-passed; Tlp-raw: rms change of the atlas by the low-pass;\n", HSHELF, HSHELF)
+@printf(io, "IT: rms of coherent internal-tide SSH (ROMS - ROMS_bt); A_err: median white-noise error of the ROMS amplitude; * inferred from atlas ratio\n")
 TSIG > 0 && @printf(io, "1/30 deg atlas smoothed with a Gaussian of sigma %.0f km (both atlases): %s\n", TSIG, join(sort(collect(SMOOTHED)), " "))
-@printf(io, "src: TPXO resolution [deg] (1/6: compared over the %d 1/6 deg-wet points only); T9-T10: RMS TPXO9-atlas vs TPXO10-atlas (1/30 deg)\n\n", count(M6))
+XL, XD = ATLAS == "fes" ? ("F-T10", "FES2022 vs TPXO10-atlas") : ("T9-T10", "TPXO9-atlas vs TPXO10-atlas")
+@printf(io, "src: atlas resolution [deg] (1/6: TPXO10 v2a fallback, compared over the %d 1/6 deg-wet points only); %s: RMS %s (1/30 deg)\n\n", count(M6), XL, XD)
 @printf(io, "%-5s %4s %7s %7s | %7s %6s %6s %7s | %7s %6s %7s %6s | %7s %7s %7s %7s | %6s %6s\n", "con", "src", "<A10>", "S", "RMS", "relRMS", "ratio", "dG",
-        "RMSshlf", "rel", "RMSdeep", "rel", "RMSfull", "RMS_lpR", "Tlp-raw", "T9-T10", "IT", "A_err")
+        "RMSshlf", "rel", "RMSdeep", "rel", "RMSfull", "RMS_lpR", "Tlp-raw", XL, "IT", "A_err")
 for r in rows
     @printf(io, "%-5s %4s %7.3f %7.3f | %7.3f %5.1f%% %6.3f %+7.2f | %7.3f %5.1f%% %7.3f %5.1f%% | %7.3f %7.3f %7.3f %7.3f | %6.2f %6.3f\n",
             r[:con] * (r[:inf] ? "*" : ""), r[:src], r[:A10], r[:S], r[:rms], 100 * r[:rms] / r[:S], r[:ar], r[:dg],
@@ -403,7 +424,7 @@ rss(key) = sqrt(sum(r[key]^2 for r in mj))
 @printf(io, "\nRSS over %s: ROMS_bt %.3f (shelf %.3f, deep %.3f), ROMS unfiltered %.3f, ROMS alone low-passed %.3f cm\n",
         join([r[:con] for r in mj], " "), rss(:rms), rss(:rms_sh), rss(:rms_dp), rss(:rms_full), rss(:rms_lpR))
 @printf(io, "median residual std %.2f cm, median SSH std %.2f cm (comparison area)\n", median(resid[M]), median(sshstd[M]))
-@printf(io, "\nRMS [cm] of LP(ROMS - TPXO) vs half-power cutoff [km] (the internal tide drops out as the cutoff grows):\n")
+@printf(io, "\nRMS [cm] of LP(ROMS - atlas) vs half-power cutoff [km] (the internal tide drops out as the cutoff grows):\n")
 for c in MAPC
     k = kc(c); (k === nothing || !haskey(TP, c)) && continue
     D = ZR[:, :, k] .- TP[c]
@@ -528,7 +549,7 @@ rel = [100 * r[:rms] / r[:S] for r in rows2]
 barplot!(ax2, 1:nb, rel; color = cols[1], strokewidth = 0)
 text!(ax2, 1:nb, rel; text = [@sprintf("%.0f", v) for v in rel], align = (:center, :bottom), offset = (0, 2), fontsize = 8, color = "#52514e")
 ylims!(ax2, 0, 1.25 * maximum(rel))
-Label(fig2[4, 1], "* inferred from S2 / K1 / N2 with the TPXO ratio (record too short to separate)", fontsize = 8, tellwidth = false)
+Label(fig2[4, 1], "* inferred from S2 / K1 / N2 with the $(TPN) ratio (record too short to separate)", fontsize = 8, tellwidth = false)
 rowsize!(fig2.layout, 3, Relative(0.25))
 figsave(dirout * "ROMS_TPXO_rms$(FSUF).png", fig2)
 
@@ -605,8 +626,8 @@ let c = "M2"
     contour!(b6, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 1)
     deco!(b6)
     Colorbar(fig6[1, 4], k6; label = "ROMS - $(TPN) amplitude [cm]", height = Relative(0.8))
-    Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: co-phase lines ROMS low-passed alone ($(Int(LCP_SD)) km, black, labelled), $(TPN) dashed orange. " *
-          "Right: |Z_ROMS| - |Z_$(TPN)|.\nDotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath; grey dashed: $(Int(HDEEP)) m; grey: $(join(BATHY, ", ")) m isobaths",
+    Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: co-phase lines ROMS low-passed alone ($(Int(LCP_SD)) km, black, labelled), $(TPN) dashed orange.\n" *
+          "Right: |Z_ROMS| - |Z_$(TPN)|. Dotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath; grey dashed: $(Int(HDEEP)) m; grey: $(join(BATHY, ", ")) m isobaths",
           fontsize = 11, tellwidth = false)
     colgap!(fig6.layout, 6)
     figsave(dirout * "ROMS_TPXO_M2_cotidal_dA$(FSUF).png", fig6)

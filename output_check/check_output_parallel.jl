@@ -10,7 +10,7 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
-    # which run to plot: CHECK_RUN=cmems_2700m (default) or 900m_pure_or
+    # which run to plot: CHECK_RUN=cmems_2700m (default), cmems_2700m_3mon or 900m_pure_or
     # (the workers inherit ENV from the main process)
     run_name = get(ENV, "CHECK_RUN", "cmems_2700m")
     proj = "/expanse/lustre/projects/uso101/hchen54/"
@@ -19,6 +19,10 @@ println("running with $(nprocs() - 1) worker processes")
         "cmems_2700m"  => (grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
                            moor = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc",
                            fold = "amazon_2700m_cmems_test", skip = 22),
+        # same setup, 2022-08-24 -> 11-30
+        "cmems_2700m_3mon" => (grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
+                               moor = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc",
+                               fold = "amazon_2700m_cmems_3mon", skip = 22),
         # 900 m NCOM run, 686 x 856 rho points
         "900m_pure_or" => (grid = proj * "input/grid/roms_grd_900m.nc",
                            moor = proj * "input/roms_grd_900m_mor_edata.nc",

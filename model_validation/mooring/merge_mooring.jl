@@ -1,7 +1,7 @@
 using NCDatasets
 
-src_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_2700m_cmems_test/after_joint"
-out_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_2700m_cmems_test/mooring_merged"
+src_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_2700m_cmems_3mon/after_joint"
+out_dir = "/expanse/lustre/projects/uso101/hchen54/amazon_2700m_cmems_3mon/mooring_merged"
 mkpath(out_dir)
 
 files = filter(f -> endswith(f, ".nc"), readdir(src_dir))
