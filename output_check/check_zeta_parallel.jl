@@ -206,7 +206,7 @@ end
 
 # --- driver process only from here on ---
 
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry"   # HPC output dir — contains avg/dia/his/rst files mixed together
+datadir = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_dbry"   # HPC output dir — contains avg/dia/his/rst files mixed together
 
 his_files = sort(filter(f -> occursin("roms_his", basename(f)) && endswith(f, ".nc"), readdir(datadir, join=true)))
 println("found $(length(his_files)) his files in $datadir")

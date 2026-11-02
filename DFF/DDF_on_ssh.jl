@@ -3,7 +3,7 @@ using NCDatasets, Dates, Statistics, FFTW
 ENV["HDF5_USE_FILE_LOCKING"] = "FALSE"   # lustre: don't lock files that other jobs may be reading
 include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
 
-grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
+grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
 include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")   # dff_run, run_dir, ddf_dir, fig_dir (set by DFF_RUN)
 datadir = joinpath(run_dir, "after_joint")   # HPC output dir — contains his/dia/station files mixed together
 

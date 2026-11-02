@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --time=08:00:00
-#SBATCH --output=/expanse/lustre/projects/uso101/hchen54/input_cmems/cmems_input_%j.log
+#SBATCH --output=/expanse/lustre/projects/uso102/hchen54/input_cmems/cmems_input_%j.log
 
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia

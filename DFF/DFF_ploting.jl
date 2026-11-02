@@ -21,7 +21,7 @@ println("running with $(nprocs() - 1) worker processes")
 @everywhere begin
     using NCDatasets, Dates, Statistics
 
-    grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
+    grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
     include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")   # dff_run, run_dir, ddf_dir, fig_dir (set by DFF_RUN; workers inherit it)
     ddf_fname = joinpath(ddf_dir, "ssh_ddf_north_south.nc")   # made by DDF_on_ssh.jl
     ds_ddf = NCDataset(ddf_fname)
@@ -45,7 +45,7 @@ println("running with $(nprocs() - 1) worker processes")
     # main mooring line M1 -> CPIES7 is the grid column xi = 343 — the middle of the trimmed DDF grid — running grid
     # south (shelf) to grid north (offshore) along eta.
     include("/home/hchen54/internalwave_julia/function/mooring_transect.jl")   # read_moorings
-    mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
+    mooring_file = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m_mor_edata.nc"   # french, M1..M4, CPIES1..9
     moor_name, moor_lon, moor_lat = read_moorings(mooring_file)
     moor_ij = NCDataset(mooring_file) do ds
         [(ds["$(n)_mor"][1] + 1, ds["$(n)_mor"][2] + 1) for n in moor_name]   # fractional Julia (xi, eta)

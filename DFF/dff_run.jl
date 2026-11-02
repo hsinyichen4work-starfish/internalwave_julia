@@ -5,9 +5,9 @@
 #   run_dir/ddf_ssh       raw ssh, DFF fields, transects, envelope/phase speed files (output)
 #   fig_dir               figures
 dff_run = get(ENV, "DFF_RUN", "amazon_900m_3mon_1008_2")
-run_dir = "/expanse/lustre/projects/uso101/hchen54/$dff_run"
+run_dir = "/expanse/lustre/projects/uso102/hchen54/$dff_run"
 isdir(run_dir) || error("DFF_RUN = $dff_run: no run directory $run_dir")
 ddf_dir = joinpath(run_dir, "ddf_ssh")
 # figure folder name per run; the 3-month run keeps its existing folder (named without the _2)
 fig_run = Dict("amazon_900m_3mon_1008_2" => "amazon_900m_3mon_1008")
-fig_dir = "/expanse/lustre/projects/uso101/hchen54/figure/$(get(fig_run, dff_run, dff_run))/DFF"
+fig_dir = "/expanse/lustre/projects/uso102/hchen54/figure/$(get(fig_run, dff_run, dff_run))/DFF"

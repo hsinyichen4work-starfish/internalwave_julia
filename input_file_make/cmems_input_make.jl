@@ -31,15 +31,16 @@ chd_ang = "rad"; chdscoord = "new2008"
 ndomx = 2; ndomy = 2
 chdscd = (N = chd_N, theta_s = chd_thetas, theta_b = chd_thetab, hc = chd_hc, scoord = chdscoord)
 
-dating = Date(2022, 8, 24):Day(1):Date(2022, 11, 30)   # one bry file per day (37-day test: .. 9-30)
-ini_time = DateTime(2022, 8, 24)
+dating = Date(2022, 8, 1):Day(1):Date(2022, 11, 30)   # one bry file per day; files already there are skipped
+ini_time = DateTime(2022, 8, 1)   # 3-month run from 08-24: 2022-08-24
 rec_hours = 0:6:24
 
 ## paths
-cmems_path = "/expanse/lustre/projects/uso101/hchen54/CMEMS_DATA/"
-src_suf = "_0822_1130"   # cmems_download.sh SUF: "" = 08-23..10-01, "_0822_1130" = 08-21..12-01
-out_root = "/expanse/lustre/projects/uso101/hchen54/input_cmems/"
-chdgrd = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_cmems_grd_$(dx)m.nc"
+cmems_path = "/expanse/lustre/projects/uso102/hchen54/CMEMS_DATA/"
+src_suf = "_0731_0824"   # cmems_download.sh SUF: "" = 08-23..10-01, "_0822_1130" = 08-21..12-01, "_0731_0824" = 07-31..08-25
+# only what is not built yet comes from src_suf: the 08-24 .. 11-30 bry files exist
+out_root = "/expanse/lustre/projects/uso102/hchen54/input_cmems/"
+chdgrd = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_cmems_grd_$(dx)m.nc"
 parent_path = joinpath(out_root, "CMEMS_DATA_NC")   # intermediate parent files
 initial_path = joinpath(out_root, "ini")
 boundary_path = joinpath(out_root, "bry")

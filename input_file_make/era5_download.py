@@ -26,8 +26,10 @@ import os
 import zipfile
 import cdsapi
 
-out = "/expanse/lustre/projects/uso101/hchen54/ERA5_DATA/"
-t0, t1 = dt.datetime(2022, 8, 21), dt.datetime(2022, 12, 1)
+out = "/expanse/lustre/projects/uso102/hchen54/ERA5_DATA/"
+# one extra day before the Aug 1 start; 08-21 .. 12-01 is already in <yyyymm>/
+t0, t1 = dt.datetime(2022, 7, 31), dt.datetime(2022, 8, 20)
+suf = "_early"   # ERA5_DATA/<yyyymm><suf>/, so the existing 202208/ is kept ("" for the 08-21 .. 12-01 download)
 area = [14.5, -52.0, -4.0, -35.0]   # N, W, S, E
 
 variables = [
@@ -49,7 +51,7 @@ while month <= t1:
     days = [d for d in range(1, 32)
             if (month + dt.timedelta(days=d - 1)).month == month.month
             and t0 <= month + dt.timedelta(days=d - 1) <= t1]
-    tag = month.strftime("%Y%m")
+    tag = month.strftime("%Y%m") + suf
     mdir = os.path.join(out, tag)
     if os.path.isdir(mdir) and len([f for f in os.listdir(mdir) if f.endswith(".nc")]) == 2:
         print(tag, "already there, skipped")

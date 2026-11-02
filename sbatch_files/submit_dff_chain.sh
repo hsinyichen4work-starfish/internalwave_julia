@@ -18,8 +18,8 @@ runs=("$@")
 [ ${#runs[@]} -eq 0 ] && runs=(amazon_900m_3mon_1008_2)
 
 for run in "${runs[@]}"; do
-    if [ ! -d "/expanse/lustre/projects/uso101/hchen54/$run/after_joint" ]; then
-        echo "skipping $run: no /expanse/lustre/projects/uso101/hchen54/$run/after_joint"
+    if [ ! -d "/expanse/lustre/projects/uso102/hchen54/$run/after_joint" ]; then
+        echo "skipping $run: no /expanse/lustre/projects/uso102/hchen54/$run/after_joint"
         continue
     fi
     tag=${run#amazon_900m_}   # short name for squeue, e.g. pure_or

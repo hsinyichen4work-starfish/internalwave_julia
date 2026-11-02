@@ -14,13 +14,13 @@ include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
 include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")   # topdown_axis3, plot_curvilinear! (surface!-as-pcolormesh trick, reused below for time/depth)
 # path relative to where you launch julia (your Documents/Julia folder)
 
-grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc" ;  # the grid_file listed in the .nc's global attributes
-bry_dir = "/expanse/lustre/projects/uso101/hchen54/input/bry_63"
+grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc" ;  # the grid_file listed in the .nc's global attributes
+bry_dir = "/expanse/lustre/projects/uso102/hchen54/input/bry_63"
 # each day's bry file is named after that day at hour 00, e.g. 2022090100
 bry_fname_for(date)  = joinpath(bry_dir, "roms_bry_900m_$(Dates.format(date, "yyyymmdd"))00.nc")
 
-datadir = "/expanse/lustre/projects/uso101/hchen54/test_63_2"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/wo_dbry900m/bry_match"   # figpath(subfolder, filename) comes from load_all_hpc.jl -> load_usefultool_fun.jl
+datadir = "/expanse/lustre/projects/uso102/hchen54/test_63_2"   # HPC output dir — contains avg/dia/his/rst files mixed together
+figure_path = "/expanse/lustre/projects/uso102/hchen54/figure/wo_dbry900m/bry_match"   # figpath(subfolder, filename) comes from load_all_hpc.jl -> load_usefultool_fun.jl
 
 ##
 mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds

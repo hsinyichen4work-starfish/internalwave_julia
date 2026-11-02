@@ -18,7 +18,7 @@
 
 set -e
 CM=~/envs/cmems/bin/copernicusmarine
-OUT=/expanse/lustre/projects/uso101/hchen54/CMEMS_DATA
+OUT=/expanse/lustre/projects/uso102/hchen54/CMEMS_DATA
 mkdir -p "$OUT"
 
 # grid extent + ~0.7 deg margin; one extra day on each side of the run.

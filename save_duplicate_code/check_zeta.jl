@@ -8,9 +8,9 @@ cmap_speed = PyPlot.matplotlib.colors.ListedColormap([[c.r, c.g, c.b] for c in c
 include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
 # path relative to where you launch julia (your Documents/Julia folder)
 
-grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry_2"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry900m"
+grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
+datadir = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_dbry_2"   # HPC output dir — contains avg/dia/his/rst files mixed together
+figure_path = "/expanse/lustre/projects/uso102/hchen54/figure/dbry900m"
 
 ##
 mask_rho, lon_rho, lat_rho, h ,pm, pn, grid_angle = NCDataset(grid_fname) do ds

@@ -10,10 +10,10 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
-    # which run to plot: CHECK_RUN=cmems_2700m (default), cmems_2700m_3mon or 900m_pure_or
+    # which run to plot: CHECK_RUN=cmems_2700m (default), cmems_2700m_3mon, cmems_2700m_0801 or 900m_pure_or
     # (the workers inherit ENV from the main process)
     run_name = get(ENV, "CHECK_RUN", "cmems_2700m")
-    proj = "/expanse/lustre/projects/uso101/hchen54/"
+    proj = "/expanse/lustre/projects/uso102/hchen54/"
     run_cfg = Dict(
         # 2700 m CMEMS ini/bry + ERA5 forcing + TPXO10 tides, 378 x 509 rho points
         "cmems_2700m"  => (grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
@@ -23,6 +23,10 @@ println("running with $(nprocs() - 1) worker processes")
         "cmems_2700m_3mon" => (grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
                                moor = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc",
                                fold = "amazon_2700m_cmems_3mon", skip = 22),
+        # same setup, 2022-08-01 -> 11-30, 55-point sponge
+        "cmems_2700m_0801" => (grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
+                               moor = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc",
+                               fold = "amazon_2700m_cmems_0801", skip = 22),
         # 900 m NCOM run, 686 x 856 rho points
         "900m_pure_or" => (grid = proj * "input/grid/roms_grd_900m.nc",
                            moor = proj * "input/roms_grd_900m_mor_edata.nc",
@@ -81,9 +85,9 @@ println("running with $(nprocs() - 1) worker processes")
     moor_group = [replace(n, r"\d+$" => "") for n in moor_name]   # "M3" -> "M", "CPIES7" -> "CPIES"
 
     # one marker style per mooring type, so the three arrays can be told apart
-    moor_style = Dict("french" => (marker = :star5,   markersize = 18, color = :magenta),
-                      "M"      => (marker = :diamond, markersize = 11, color = :cyan),
-                      "CPIES"  => (marker = :circle,  markersize = 10, color = :yellow))
+    moor_style = Dict("french" => (marker = :star5,   markersize = 14.4, color = :magenta),
+                      "M"      => (marker = :diamond, markersize = 8.8, color = :cyan),
+                      "CPIES"  => (marker = :circle,  markersize = 8, color = :yellow))
 
     # marks every mooring on the map; z = 0 puts them on the same flat plane as
     # plot_curvilinear!'s surface, and overdraw keeps them from being hidden
@@ -91,7 +95,7 @@ println("running with $(nprocs() - 1) worker processes")
     function add_mooring!(ax; scale = 1)
         for g in unique(moor_group)
             k = findall(==(g), moor_group)
-            st = get(moor_style, g, (marker = :rect, markersize = 10, color = :white))
+            st = get(moor_style, g, (marker = :rect, markersize = 8, color = :white))
             scatter!(ax, Point3f.(moor_lon[k], moor_lat[k], 0);
                      marker = st.marker, markersize = st.markersize * scale, color = st.color,
                      strokecolor = :black, strokewidth = 1.2 * scale, overdraw = true)
@@ -284,7 +288,10 @@ end
             temp_1m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -1.0)
             temp_100m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -100.0)
  
-            fig = Figure(; figkw(18, 7.7)...)
+            # two map panels side by side: twice the width of the single-panel
+            # plots (36 x 13.5 cm); page = 36 keeps the font at 10 pt so each
+            # panel looks the same as the other figures
+            fig = Figure(; figkw(36, 13.5; page = 36)...)
             for (col, (field, depth_label, crange)) in enumerate(((temp_1m, "1 m", (24, 30)), (temp_100m, "100 m", (15, 30))))
                 ax = map_axis(fig[1, 2col - 1]; title = "Temperature at $depth_label, $(str1[t])")
                 sp = plot_curvilinear!(ax, lon_rho, lat_rho, field; colormap = :thermal, colorrange = crange)

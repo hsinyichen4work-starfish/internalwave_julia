@@ -7,21 +7,28 @@
 # one daily MAT file (bryfile_dynamic<dx>_<yyyymmdd>.mat, raw W/m, for
 # diagnostics/plotting) per day. Existing files are overwritten.
 #
-# Run from the Documents/Julia project with threads, e.g.
-#     julia -t auto --project=/home/hsinyi/Documents/Julia input_file_make/dbry_make.jl
+# Run on Expanse as a batch job (sbatch_files/dbry_make_job.sh), i.e.
+#     julia -t 16 --project=. input_file_make/dbry_make.jl
+#
+# Set up for the 2700 m CMEMS run; the 900 m NCOM settings are kept as comments.
 
 using Dates
 
-include("/home/hsinyi/Documents/Julia/function/dbry_fun.jl")
+include("/home/hchen54/internalwave_julia/function/dbry_fun.jl")
 
 ##
-dx = 900
-child_grid_file = "/home/hsinyi/roms_data/grid/roms_grd_$(dx)m.nc"
-child_bry_path = "/home/hsinyi/roms_data/bry/"
-flux_out_path = "/home/hsinyi/roms_data/bry_dynamic_flux/"   # daily nc files (rho0-normalized) that feed ROMS
-daily_mat_path = "/home/hsinyi/matlab_file/dbry_saving/"     # daily MAT files (NOT rho0-normalized)
+# 900 m NCOM (hsinyi machine): dx = 900, grid /home/hsinyi/roms_data/grid/roms_grd_900m.nc,
+# bry /home/hsinyi/roms_data/bry/, flux /home/hsinyi/roms_data/bry_dynamic_flux/,
+# mat /home/hsinyi/matlab_file/dbry_saving/, dating 2022-08-22 .. 11-30
+proj = "/expanse/lustre/projects/uso102/hchen54/input_cmems/"
+dx = 2700
+child_grid_file = proj * "grid/roms_cmems_grd_$(dx)m.nc"
+child_bry_path = proj * "bry/"
+flux_out_path = proj * "bry/"   # daily nc files (rho0-normalized) that feed ROMS, next to the bry files (make_run_folder_cmems.jl looks there)
+daily_mat_path = proj * "dbry_mat/"   # daily MAT files (NOT rho0-normalized), read by dbry_check_plotting.jl
 
-dating = Date(2022, 8, 22):Day(1):Date(2022, 11, 30)
+# CMEMS bry files are 6-hourly (5 records/day), so the highpass keeps 12..28 h
+dating = Date(2022, 8, 24):Day(1):Date(2022, 11, 30)
 
 cutoff_days = 28 / 24   # highpass cutoff period (~28 hours)
 N_butter = 5

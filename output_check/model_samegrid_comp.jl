@@ -14,13 +14,13 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/zlevs3.jl")
     include("/home/hchen54/internalwave_julia/function/uv2rho.jl")
 
-    grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # shared by both runs
-    datadir1   = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_pure_or/after_joint"      # run 1: pure orlanski
-    datadir2   = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"  # run 2: 3-month run
+    grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"   # shared by both runs
+    datadir1   = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_pure_or/after_joint"      # run 1: pure orlanski
+    datadir2   = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_3mon_1008_2/after_joint"  # run 2: 3-month run
     label1, label2 = "pure_or", "3mon_1008_2"
     title1, title2 = "pure Orlanski bry", "dynamic bry"   # names used in figure titles
 
-    figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/orlanski_comp"
+    figure_path = "/expanse/lustre/projects/uso102/hchen54/figure/orlanski_comp"
 
     t_ref = DateTime(1994, 1, 1, 0, 0, 0)   # ocean_time is "seconds since 1994/01/01"
 

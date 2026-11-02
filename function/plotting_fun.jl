@@ -1,4 +1,4 @@
-using CairoMakie, Dates
+using CairoMakie, Dates, Printf
 
 # Your ROMS grid is curvilinear (lon_rho/lat_rho are full 2D fields, not
 # separable 1D axes) — that's exactly why the old code used PyPlot's
@@ -101,3 +101,48 @@ function quiver_curvilinear!(ax, x, y, u, v; skip = 1, lengthscale = 1.0,
     ws = zeros(length(xs))
     return arrows2d!(ax, xs, ys, zs, us, vs, ws; lengthscale = lengthscale, kwargs...)
 end
+
+# Regular lon/lat map grid for a rotated ROMS grid, for plots that need x and y vectors (heatmap!, regular contour!).
+# The (xi, eta) of each map point come from Newton iterations on the grid's lon/lat, from an affine first guess.
+#   mg = map_grid(lon, lat; dll = 0.01)            # lon, lat: 2-D rho-point arrays
+#   heatmap!(ax, mg.lonv, mg.latv, mg.rg(X))       # rg: ROMS field X -> map grid, bilinear; NaN outside the grid
+# Returns (; lonv, latv, rg, inside). Allocates a lot: on a login node run julia with --heap-size-hint=3G.
+function map_grid(lon, lat; dll = 0.01)
+    NX, NY = size(lon)
+    lonv = (floor(minimum(lon) / dll) * dll):dll:(ceil(maximum(lon) / dll) * dll)
+    latv = (floor(minimum(lat) / dll) * dll):dll:(ceil(maximum(lat) / dll) * dll)
+    function bil(X, fi, fj)
+        i0 = clamp(floor(Int, fi), 1, NX - 1); j0 = clamp(floor(Int, fj), 1, NY - 1); wx = fi - i0; wy = fj - j0
+        return (1 - wx) * (1 - wy) * X[i0, j0] + wx * (1 - wy) * X[i0 + 1, j0] + (1 - wx) * wy * X[i0, j0 + 1] + wx * wy * X[i0 + 1, j0 + 1]
+    end
+    X = hcat(ones(NX * NY), vec(repeat(1:NX, 1, NY)), vec(repeat((1:NY)', NX, 1)))
+    cl = X \ vec(lon); ct = X \ vec(lat)                                 # affine first guess
+    Jinv = inv([cl[2] cl[3]; ct[2] ct[3]])
+    FI = zeros(length(lonv), length(latv)); FJ = similar(FI)
+    Threads.@threads for jl in eachindex(latv)
+        for il in eachindex(lonv)
+            fi, fj = Jinv * [lonv[il] - cl[1], latv[jl] - ct[1]]
+            for _ in 1:4
+                fi = clamp(fi, 1, NX); fj = clamp(fj, 1, NY)
+                i0 = clamp(floor(Int, fi), 1, NX - 1); j0 = clamp(floor(Int, fj), 1, NY - 1)
+                Jl = [lon[i0+1, j0]-lon[i0, j0] lon[i0, j0+1]-lon[i0, j0]; lat[i0+1, j0]-lat[i0, j0] lat[i0, j0+1]-lat[i0, j0]]
+                d = Jl \ [lonv[il] - bil(lon, fi, fj), latv[jl] - bil(lat, fi, fj)]
+                fi += d[1]; fj += d[2]
+            end
+            FI[il, jl] = fi; FJ[il, jl] = fj
+        end
+    end
+    inside = (1 .<= FI .<= NX) .& (1 .<= FJ .<= NY)
+    rg(X) = [inside[p] ? bil(X, FI[p], FJ[p]) : NaN for p in CartesianIndices(FI)]
+    return (; lonv, latv, rg, inside)
+end
+
+# Outline of a block of a rotated grid, as (x, y) for lines!: lines!(ax, grid_edge(lon, lat)...; color = :gray30)
+function grid_edge(lon, lat; i = axes(lon, 1), j = axes(lon, 2))
+    side(A) = vcat(A[i, j[1]], A[i[end], j], A[reverse(i), j[end]], A[i[1], reverse(j)])
+    return side(lon), side(lat)
+end
+
+# Tick formats for lon in 0..360 west of Greenwich and lat: Axis(...; xtickformat = lonfmt, ytickformat = latfmt)
+lonfmt(vs) = [@sprintf("%.0f°W", 360 - v) for v in vs]
+latfmt(vs) = [v < 0 ? @sprintf("%.0f°S", -v) : (v == 0 ? "0°" : @sprintf("%.0f°N", v)) for v in vs]

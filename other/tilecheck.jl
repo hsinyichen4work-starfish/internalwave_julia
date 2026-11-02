@@ -1,11 +1,11 @@
 using NCDatasets, CairoMakie, Statistics, Printf
 include("/home/hchen54/internalwave_julia/function/fig_setup.jl")   # figkw, figsave
 
-base = "/expanse/lustre/projects/uso101/hchen54"
+base = "/expanse/lustre/projects/uso102/hchen54"
 rec  = get(ARGS, 1, "roms_his.20220824040000.nc")
 runs = ["old" => joinpath(base, "amazon_900m_3mon_old", rec),
         "new" => joinpath(base, "amazon_900m_3mon", "after_joint", rec)]
-grid = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
+grid = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
 outdir = ARGS[2]
 pm, pn, mask = NCDataset(grid) do ds; ds["pm"][:, :], ds["pn"][:, :], ds["mask_rho"][:, :]; end
 

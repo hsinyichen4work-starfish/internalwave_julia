@@ -10,12 +10,12 @@ include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")   # zlevs3,
 # stitched into one continuous record, so a jump at a day/file transition
 # shows up directly in boundary-position vs time (Hovmöller) plots.
 
-grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
-bry_dir = "/expanse/lustre/projects/uso101/hchen54/input/bry"
+grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
+bry_dir = "/expanse/lustre/projects/uso102/hchen54/input/bry"
 bry_fname_for(date) = joinpath(bry_dir, "roms_bry_900m_$(Dates.format(date, "yyyymmdd"))00.nc")
 
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_dbry_0927/"
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry_0927/bry_match_tempjump"   # used by figpath()
+datadir = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_dbry_0927/"
+figure_path = "/expanse/lustre/projects/uso102/hchen54/figure/dbry_0927/bry_match_tempjump"   # used by figpath()
 mkpath(figure_path)
 
 # whole run split into consecutive window_len-day windows (0824-0827,

@@ -7,6 +7,6 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=01:00:00
-#SBATCH --output=/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo_tide_%j.log
+#SBATCH --output=/expanse/lustre/projects/uso102/hchen54/input_cmems/tpxo_tide_%j.log
 
 ~/.venvs/utide/bin/python -I /home/hchen54/internalwave_julia/input_file_make/tpxo_tide_make.py

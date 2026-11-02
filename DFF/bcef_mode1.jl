@@ -34,7 +34,7 @@ println("running with $(nprocs() - 1) worker processes, heap size hint $(heap_mb
     include("/home/hchen54/internalwave_julia/function/uv2rho.jl")   # u2rho, v2rho
     include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")       # dff_run, run_dir, ddf_dir, fig_dir (set by DFF_RUN)
 
-    grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
+    grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
     datadir = joinpath(run_dir, "after_joint")
     # output folder; BCEF_OUT overrides it (e.g. for a test run)
     out_dir = get(ENV, "BCEF_OUT", joinpath(run_dir, "ddf_bcef"))
@@ -137,6 +137,11 @@ ocean_time = DateTime(1994, 1, 1) .+ Second.(round.(Int, reduce(vcat, [NCDataset
 nt = length(ocean_time)
 println("$dff_run: $(length(his_files)) his files, $nt records, $(ocean_time[1]) -> $(ocean_time[end]); grid $nx x $ny x $nz")
 all(==(Hour(1)), diff(ocean_time)) || @warn "records are not hourly and evenly spaced"
+# what the run found: printed, and written to bcef_mode1_analysis.txt at the end
+report_fname = joinpath(out_dir, "bcef_mode1_analysis.txt")
+report = ["$dff_run: $nt records, $(ocean_time[1]) -> $(ocean_time[end]); grid $nx x $ny x $nz; mode 1 only"]
+say(line) = (println(line); push!(report, line))
+rng(lo_hi) = round.(Float64.(Tuple(lo_hi)), digits = 3)   # (min, max) for the report
 
 # ============================================================================
 # (1) pass 1: time-mean rho and zeta, then N² and the mode-1 structure at every point
@@ -151,16 +156,16 @@ function mode1(zr, zw, rho; N2min = 1e-7)
     nz = length(zr)
     Hz = diff(zw)
     dzc = diff(zr)
-    N2 = max.(-9.81 / rho0 .* diff(rho) ./ dzc, N2min)   # [s⁻²] on the interior interfaces 2..nz
-    B = N2 .* dzc
-    d = (1 ./ Hz[2:nz] .+ 1 ./ Hz[1:nz-1]) ./ B
-    e = (-1 ./ Hz[2:nz-1]) ./ sqrt.(B[1:end-1] .* B[2:end])
-    F = eigen(SymTridiagonal(d, e), 1:1)
-    W = [0; F.vectors[:, 1] ./ sqrt.(B); 0]
-    φ = diff(W) ./ Hz
-    φ ./= sqrt(sum(φ .^ 2 .* Hz) / sum(Hz))
-    φ[end] < 0 && (φ .*= -1)
-    1 / sqrt(F.values[1]), φ, N2
+    N2 = max.(-9.81 / rho0 .* diff(rho) ./ dzc, N2min)          # ⟨N²⟩ in Eq. (10)
+    B = N2 .* dzc                                                # ┐
+    d = (1 ./ Hz[2:nz] .+ 1 ./ Hz[1:nz-1]) ./ B                  # │ Eq. (10): ∂²Φₙ/∂z² + ⟨N²⟩/cₙ² Φₙ = 0,
+    e = (-1 ./ Hz[2:nz-1]) ./ sqrt.(B[1:end-1] .* B[2:end])      # │ finite differences → matrix eigenproblem
+    F = eigen(SymTridiagonal(d, e), 1:1)                         # ┘ mode n = 1 only; eigenvalue = 1/c₁²
+    W = [0; F.vectors[:, 1] ./ sqrt.(B); 0]                      # Φ₁(z), with Φ = 0 at bottom and surface
+    φ = diff(W) ./ Hz                                            # Eq. (11): ϕₙ = ∂Φₙ/∂z
+    φ ./= sqrt(sum(φ .^ 2 .* Hz) / sum(Hz))                      # Eq. (12): ∫ϕₙ² dz = H  (m = n case) [Normalized]
+    φ[end] < 0 && (φ .*= -1)                                     # sign convention (not in the paper)
+    1 / sqrt(F.values[1]), φ, N2                                 # returns c₁, ϕ₁, N²
 end
 
 if isfile(struct_fname)
@@ -189,8 +194,6 @@ else
         φ1, c1, N2
     end
     @time φ1, c1, N2 = all_modes(z_r_mean, z_w_mean, rho_mean)
-    println("mode-1 speed c1: $(round.(extrema(c1), digits = 2)) m/s, median $(round(median(c1), digits = 2)) m/s; ",
-            "over h > 1000 m median $(round(median(c1[h .> 1000]), digits = 2)) m/s")
     NCDataset(struct_fname * ".tmp", "c") do ds
         defDim(ds, "xi_rho", nx); defDim(ds, "eta_rho", ny); defDim(ds, "s_rho", nz); defDim(ds, "s_w_interior", nz - 1)
         defVar(ds, "h", h, ("xi_rho", "eta_rho"); attrib = ["units" => "meter"])
@@ -205,6 +208,12 @@ else
     end
     mv(struct_fname * ".tmp", struct_fname; force = true)
     println("wrote $struct_fname")
+end
+
+# from the structure file, so a rerun that skips pass 1 reports it too
+let c1 = NCDataset(ds -> ds["c1"][:, :], struct_fname)
+    say("mode-1 speed c1: $(round.(Float64.(extrema(c1)), digits = 2)) m/s, median $(round(median(c1), digits = 2)) m/s; " *
+        "over h > 1000 m median $(round(median(c1[h .> 1000]), digits = 2)) m/s")
 end
 
 # ============================================================================
@@ -229,8 +238,8 @@ batch = 4 * nworkers()   # files per batch: the results of one batch (~30 MB per
     end
     println("  pass 2: $(last(b)) / $(length(his_files)) files")
 end
-println("mode 1 holds $(round(100 * e1_sum / etot_sum, digits = 1))% of ∫p'² dz (all frequencies, whole domain and record)")
-println("p1: $(extrema(p1)) Pa, u1: $(extrema(u1)) m/s, v1: $(extrema(v1)) m/s")
+say("mode 1 holds $(round(100 * e1_sum / etot_sum, digits = 1))% of ∫p'² dz (all frequencies, whole domain and record)")
+say("p1: $(rng(extrema(p1))) Pa, u1: $(rng(extrema(u1))) m/s, v1: $(rng(extrema(v1))) m/s")
 
 isfile(puv_fname) && rm(puv_fname)
 NCDataset(puv_fname * ".tmp", "c") do ds
@@ -250,3 +259,5 @@ NCDataset(puv_fname * ".tmp", "c") do ds
 end
 mv(puv_fname * ".tmp", puv_fname; force = true)
 println("wrote $puv_fname")
+open(io -> foreach(l -> println(io, l), report), report_fname, "w")
+println("wrote $report_fname")

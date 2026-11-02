@@ -6,10 +6,10 @@ include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 # 2x4 report figure: row 1 = speed at 1 m (with arrows), row 2 = temperature,
 # one column per snapshot time. Same styling as check_output_parallel.jl.
 
-grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
-mooring_file = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m_mor_edata.nc"
-datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"
-figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008"
+grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
+mooring_file = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m_mor_edata.nc"
+datadir = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_3mon_1008_2/after_joint"
+figure_path = "/expanse/lustre/projects/uso102/hchen54/figure/amazon_900m_3mon_1008"
 mkpath(figure_path)
 
 snap_times = [DateTime(2022, 9, 1, 12), DateTime(2022, 10, 1, 12),

@@ -33,7 +33,7 @@ input_filenames = (grd = "roms_grd_900m",
 input_folder = (grd = "grid", ini = "ini", bry = "bry", frc = "frc")
 filename = "amazon_3mon_pur_or.in"
 
-projectpath = "/expanse/lustre/projects/uso101/hchen54/"
+projectpath = "/expanse/lustre/projects/uso102/hchen54/"
 output_fold = projectpath * fold_name
 
 ##

@@ -28,7 +28,7 @@ date = ds_puv["ocean_time"][:]   # DateTime
 H, c1 = NCDataset(struct_fname) do ds
     Float32.(ds["h"][1:nx_f, 1:ny_f] .+ ds["zeta_mean"][1:nx_f, 1:ny_f]), ds["c1"][1:nx_f, 1:ny_f]
 end
-grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
+grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
 lon_rho, lat_rho, land_mask = NCDataset(grid_fname) do ds
     ds["lon_rho"][1:nx_f, 1:ny_f], ds["lat_rho"][1:nx_f, 1:ny_f], ds["mask_rho"][1:nx_f, 1:ny_f]
 end

@@ -1,8 +1,9 @@
 using FFMPEG_jll
 
-figure_path = "/home/hsinyi/figure/20261023_NCOM2700/full_domain/zeta_grad";
-movie_path = "/home/hsinyi/figure/20261023_NCOM2700/full_domain/";
-start_string = "zeta_grad_ncom_plot"
+figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry900m/bry_match/flux_timeplot";
+movie_path = "/expanse/lustre/projects/uso101/hchen54/figure/dbry900m/bry_match";
+start_string = "vp_south"
+delete_png = true   # true: delete the PNGs once their movie is saved
 
 cd(figure_path)
 readdir(figure_path) 
@@ -29,6 +30,11 @@ function make_movie(prefix::String; fps = 4)
     end
     rm(listfile)
     println("saved movie to ", outname)
+    # only after the mp4 exists, so a failed ffmpeg run never loses the figures
+    if delete_png && isfile(outname)
+        foreach(rm, pngs)
+        println("deleted ", length(pngs), " PNGs for prefix \"$prefix\"")
+    end
 end
 
 make_movie(start_string)

@@ -31,11 +31,11 @@ from netCDF4 import Dataset, num2date
 from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import distance_transform_edt
 
-era5 = "/expanse/lustre/projects/uso101/hchen54/ERA5_DATA/"
-grdfile = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_cmems_grd_2700m.nc"
-outdir = "/expanse/lustre/projects/uso101/hchen54/input_cmems/frc_era5/"
+era5 = "/expanse/lustre/projects/uso102/hchen54/ERA5_DATA/"
+grdfile = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_cmems_grd_2700m.nc"
+outdir = "/expanse/lustre/projects/uso102/hchen54/input_cmems/frc_era5/"
 prefix = "roms_era5_frc_2700m_"
-days = [dt.datetime(2022, 8, 22) + dt.timedelta(days=i) for i in range(101)]   # 08-22 .. 11-30
+days = [dt.datetime(2022, 8, 1) + dt.timedelta(days=i) for i in range(122)]   # 08-01 .. 11-30
 t_epoch = dt.datetime(1994, 1, 1)
 remake = False
 
@@ -56,7 +56,7 @@ inst_vars = ["msl", "sst"]
 
 
 def load(kind, names):
-    files = sorted(glob.glob(os.path.join(era5, "2022??", f"data_stream-oper_stepType-{kind}.nc")))
+    files = sorted(glob.glob(os.path.join(era5, "2022*", f"data_stream-oper_stepType-{kind}.nc")))
     if not files:
         raise FileNotFoundError(f"no ERA5 {kind} files in {era5}")
     t, data = [], {v: [] for v in names}

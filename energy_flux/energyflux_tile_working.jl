@@ -17,10 +17,10 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
-    grid_fname = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
-    datadir = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
-    figure_path = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/energy_flux"   # separate from his_rejoint so the two scripts' skip checks don't interfere
-    nc_dum_save = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/energyflux_dum"
+    grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"   # the grid_file listed in the .nc's global attributes
+    datadir = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_3mon_1008_2/after_joint"   # HPC output dir — contains avg/dia/his/rst files mixed together
+    figure_path = "/expanse/lustre/projects/uso102/hchen54/figure/amazon_900m_3mon_1008/energy_flux"   # separate from his_rejoint so the two scripts' skip checks don't interfere
+    nc_dum_save = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_3mon_1008_2/energyflux_dum"
     mkpath(figure_path)
     mkpath(nc_dum_save)
 

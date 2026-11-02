@@ -56,13 +56,13 @@ Run (batch: sbatch_files/julia_tidalcomp.sh):
 using NCDatasets, CairoMakie, Printf, Statistics, LinearAlgebra, Dates
 include("/home/hchen54/internalwave_julia/function/fig_setup.jl")   # figkw(w_cm, h_cm), figsave, cm_to_pt
 
-const dirR   = "/expanse/lustre/projects/uso101/hchen54/amazon_900m_3mon_1008_2/after_joint/"
-const fgrd   = "/expanse/lustre/projects/uso101/hchen54/input/grid/roms_grd_900m.nc"
-const fT6    = "/expanse/lustre/projects/uso101/hchen54/data_upload/h_tpxo10.v2a"
-const dirT30 = Dict("tpxo10" => "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO10a_v2/1_30deg/TPXO10_atlas_v2_nc/",
-                    "tpxo9"  => "/expanse/lustre/projects/uso101/hchen54/input_cmems/tpxo/TPXO9_atlas_nc-selected/")
-const dirFES = "/expanse/lustre/projects/uso101/hchen54/input_cmems/fes2022/ocean_tide_extrapolated/"
-const dirout = "/expanse/lustre/projects/uso101/hchen54/figure/amazon_900m_3mon_1008/tidal_comp/"
+const dirR   = "/expanse/lustre/projects/uso102/hchen54/amazon_900m_3mon_1008_2/after_joint/"
+const fgrd   = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
+const fT6    = "/expanse/lustre/projects/uso102/hchen54/data_upload/h_tpxo10.v2a"
+const dirT30 = Dict("tpxo10" => "/expanse/lustre/projects/uso102/hchen54/input_cmems/tpxo/TPXO10a_v2/1_30deg/TPXO10_atlas_v2_nc/",
+                    "tpxo9"  => "/expanse/lustre/projects/uso102/hchen54/input_cmems/tpxo/TPXO9_atlas_nc-selected/")
+const dirFES = "/expanse/lustre/projects/uso102/hchen54/input_cmems/fes2022/ocean_tide_extrapolated/"
+const dirout = "/expanse/lustre/projects/uso102/hchen54/figure/amazon_900m_3mon_1008/tidal_comp/"
 const PY     = "/home/hchen54/.venvs/utide/bin/python"
 const NODPY  = "/home/hchen54/internalwave_julia/function/nodal_args.py"
 const RUN    = "amazon900m"
@@ -627,7 +627,7 @@ let c = "M2"
     deco!(b6)
     Colorbar(fig6[1, 4], k6; label = "ROMS - $(TPN) amplitude [cm]", height = Relative(0.8))
     Label(fig6[0, 1:4], "M2 barotropic tide, $mapsuf\nLeft: co-phase lines ROMS low-passed alone ($(Int(LCP_SD)) km, black, labelled), $(TPN) dashed orange.\n" *
-          "Right: |Z_ROMS| - |Z_$(TPN)|. Dotted box: comparison area (stats). Thick black: $(Int(HSHELF)) m isobath; grey dashed: $(Int(HDEEP)) m; grey: $(join(BATHY, ", ")) m isobaths",
+          "Right: |Z_ROMS| - |Z_$(TPN)|. Dotted box: comparison area (stats).\nThick black: $(Int(HSHELF)) m isobath; grey dashed: $(Int(HDEEP)) m; grey: $(join(BATHY, ", ")) m isobaths",
           fontsize = 11, tellwidth = false)
     colgap!(fig6.layout, 6)
     figsave(dirout * "ROMS_TPXO_M2_cotidal_dA$(FSUF).png", fig6)
