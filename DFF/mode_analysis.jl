@@ -284,26 +284,33 @@ for p in points
     println("  $(rpad(p.name, 12)) ", [round(100 * pvar_mode[p.i, p.j, n] / pvar_total[p.i, p.j], digits = 1) for n in 1:nmode], " %")
 end
 
-let fig = Figure(size = (1700, 720))
+let fig = Figure(size = (1500, 820))
     # colour range per mode: 2nd to 98th percentile of the unmasked share, rounded to 5 %
+    map_w = 460   # [px] width of each map
     crange(a) = (v = filter(isfinite, a); (5floor(quantile(v, 0.02) / 5), 5ceil(quantile(v, 0.98) / 5)))
     for n in 1:nmode
         ax = topdown_axis(fig[1, n]; title = "mode $n: $(round(100 * sum(pvar_mode[:, :, n][show_mask]) / sum(pvar_total[show_mask]), digits = 1)) % of ∫p'² dz over the area",
-                          ylabel = n == 1 ? "Latitude" : "", backgroundcolor = :gray80)
+                          ylabel = n == 1 ? "Latitude" : "", backgroundcolor = :gray80, aspect = nothing,
+                          width = map_w, height = map_w * -(reverse(lims[2])...) / -(reverse(lims[1])...))   # fixed size at the data aspect
         hm = plot_curvilinear!(ax, lon_rho, lat_rho, share[n]; colormap = :viridis, colorrange = crange(share[n]), nan_color = :gray80)
-        contour!(ax, lon_rho, lat_rho, h; levels = share_isobaths, color = :white, linewidth = 0.7, labels = true, labelsize = 9, labelcolor = :white)
+        for (lev, ls) in zip(share_isobaths, [:dot, :dash, :solid])
+            contour!(ax, lon_rho, lat_rho, h; levels = [lev], color = :white, linewidth = 0.9, linestyle = ls)
+        end
         scatter!(ax, moor_lon, moor_lat; marker = :circle, markersize = 6, color = :yellow, strokewidth = 0.6)
         for (k, p) in enumerate(points)
             scatter!(ax, [lon_rho[p.i, p.j]], [lat_rho[p.i, p.j]]; marker = :star5, markersize = 15, color = point_color[k],
-                     strokewidth = 0.8, strokecolor = :black, label = "$(p.name): $(round(share[n][p.i, p.j], digits = 1)) %")
+                     strokewidth = 0.8, strokecolor = :black, label = "$(p.name): $(round(100 * pvar_mode[p.i, p.j, n] / pvar_total[p.i, p.j], digits = 1)) %")
         end
         xlims!(ax, lims[1]...); ylims!(ax, lims[2]...)
         Colorbar(fig[2, n], hm; vertical = false, label = "share of mode $n [%]", flipaxis = false)
-        Legend(fig[3, n], ax; nbanks = 2, framevisible = false, labelsize = 10, patchsize = (12, 12), rowgap = 0)
+        Legend(fig[3, n], ax; nbanks = 2, framevisible = false, labelsize = 11, patchsize = (12, 12), rowgap = 0, tellheight = true)
     end
     Label(fig[0, :], "$dff_run: share of the baroclinic pressure variance in each mode (pvar_mode / pvar_total, all frequencies)\n" *
-                     "masked: h < $(Int(h_mask)) m and $edge points at the edges; white: $(join(share_isobaths, " / ")) m isobaths; yellow: moorings";
+                     "masked: h < $(Int(h_mask)) m and $edge edge points;  white dotted / dashed / solid: $(join(share_isobaths, " / ")) m;  " *
+                     "yellow: moorings;  legend: share at each point";
           fontsize = 14)
+    rowgap!(fig.layout, 8)
+    resize_to_layout!(fig)
     save(joinpath(figure_path, "mode_share_map.png"), fig; px_per_unit = 2)
 end
 println("saved mode_share_map.png")

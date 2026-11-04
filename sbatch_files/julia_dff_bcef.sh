@@ -12,8 +12,9 @@
 #SBATCH --mail-user=HsinYi.Chen@usm.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,TIME_LIMIT_90
 
-# directional Fourier filter of the mode-1 flux (DFF/DFF_on_bcef.jl): one process, FFTs threaded over the 8 CPUs;
-# peak ~3 spectra + 3 filtered fields + FFT temporaries (~50 GB for the 3-month run)
+# directional Fourier filter of the flux of modes 1..NMODE (DFF/DFF_on_bcef.jl, reads bcef_modes<NMODE>_puv.nc;
+# NMODE from --export, default 3), one mode at a time: one process, FFTs threaded over the 8 CPUs;
+# peak ~3 spectra + 3 filtered fields + FFT temporaries of one mode (~40 GB for the 3-month run); ~20 min per mode
 set -o pipefail   # job shows FAILED (not COMPLETED) when julia fails, despite the tee
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia
