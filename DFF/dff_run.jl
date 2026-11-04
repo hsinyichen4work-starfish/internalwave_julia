@@ -10,4 +10,7 @@ isdir(run_dir) || error("DFF_RUN = $dff_run: no run directory $run_dir")
 ddf_dir = joinpath(run_dir, "ddf_ssh")
 # figure folder name per run; the 3-month run keeps its existing folder (named without the _2)
 fig_run = Dict("amazon_900m_3mon_1008_2" => "amazon_900m_3mon_1008")
+# model grid per run (default: the 900 m grid)
+run_grid = Dict("amazon_2700m_cmems_0801" => "roms_cmems_grd_2700m.nc")
+run_grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/$(get(run_grid, dff_run, "roms_grd_900m.nc"))"
 fig_dir = "/expanse/lustre/projects/uso102/hchen54/figure/$(get(fig_run, dff_run, dff_run))/DFF"

@@ -34,7 +34,7 @@ println("running with $(nprocs() - 1) worker processes, heap size hint $(heap_mb
     include("/home/hchen54/internalwave_julia/function/uv2rho.jl")   # u2rho, v2rho
     include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")       # dff_run, run_dir, ddf_dir, fig_dir (set by DFF_RUN)
 
-    grid_fname = "/expanse/lustre/projects/uso102/hchen54/input/grid/roms_grd_900m.nc"
+    grid_fname = run_grid_fname   # from dff_run.jl
     datadir = joinpath(run_dir, "after_joint")
     # output folder; BCEF_OUT overrides it (e.g. for a test run)
     out_dir = get(ENV, "BCEF_OUT", joinpath(run_dir, "ddf_bcef"))

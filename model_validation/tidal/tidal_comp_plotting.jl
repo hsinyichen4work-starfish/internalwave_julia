@@ -8,7 +8,7 @@ Section 1: read the comparison file. Each Z = A exp(-iG) [cm] is stored as ampli
   CP ROMS low-passed over deep water for co-phase lines (NaN outside deep water).
 
 Usage:
-  julia -t 2 --heap-size-hint=3G tidal_comp_plotting.jl   # full-grid file (the hint keeps it under the login node limit)
+  julia -t 1 --heap-size-hint=2G tidal_comp_plotting.jl   # full-grid file (keeps it under the login node's 8 GB limit)
   STRIDE=20 julia tidal_comp_plotting.jl    # the every-20th-point test file (_s20)
 =#
 
@@ -20,7 +20,7 @@ include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")   # map_gri
 const data_folder = "/expanse/lustre/projects/uso102/hchen54/figure/amazon_900m_3mon_1008/tidal_comp/"
 const STRIDE      = parse(Int, get(ENV, "STRIDE", "1"))   # which file to read (1 = full grid)
 const fname       = data_folder * "ROMS_FES_sshfit_comp$(STRIDE > 1 ? "_s$STRIDE" : "").nc"
-const figdir      = "/home/hchen54/figure_check/"          # figures go here for now
+const figdir      = data_folder                           # figures next to the data
 mkpath(figdir)
 
 ## --- section 1: read the comparison file (Julia order: xi, eta, con)
@@ -137,3 +137,116 @@ Label(fig2[0, 1:6], "ROMS Amazon 900 m vs FES2022b: deep-ocean amplitude [cm, co
 colgap!(fig2.layout, 6)
 figsave(figdir * "ROMS_FES_deep_cotidal$(STRIDE > 1 ? "_s$STRIDE" : "").png", fig2)
 
+
+## --- figure 3: rms maps per constituent: ROMS alone |Z_R|/√2 (raw fit, no atlas in it), FES |Z_F|/√2, and the
+## low-passed difference |Z_B - Z_F|/√2 = |LP(Z_R - Z_F)|/√2, internal tide removed (the point-wise RMS of the table); ROMS and FES share a colour scale; dotted box: comparison area
+ib = findall(comp_data.M); box = grid_edge(lonR, latR; i = minimum(first.(Tuple.(ib))):maximum(first.(Tuple.(ib))),
+                                                   j = minimum(last.(Tuple.(ib))):maximum(last.(Tuple.(ib))))
+fig3 = Figure(; figkw(18, 4.6K + 2)...)
+for (k, c) in enumerate(comp_data.cons)
+    zr, zf = comp_data.ZR[:, :, k], comp_data.ZF[:, :, k]                 # ROMS alone, FES
+    zd = comp_data.ZB[:, :, k] .- zf                                      # LP(ROMS - FES)
+    Rr, Rf, Rd = abs.(zr) ./ √2, abs.(zf) ./ √2, abs.(zd) ./ √2           # [cm]
+    inM(X) = filter(isfinite, X[comp_data.M])
+    rng = (quantile(vcat(inM(Rr), inM(Rf)), 0.001), quantile(vcat(inM(Rr), inM(Rf)), 0.999))
+    last_row = k == K
+    for (q, X, ttl) in ((1, Rr, "ROMS rms"), (2, Rf, "FES2022b rms"), (4, Rd, "rms of LP(ROMS − FES)"))
+        a = Axis(fig3[k, q]; mapax..., title = k == 1 ? ttl : "", yticklabelsvisible = q == 1, xticklabelsvisible = last_row)
+        h = heatmap!(a, lonv, latv, rg(X); nan_color = :white,
+                     colormap = q == 4 ? :Reds : Reverse(:Spectral), colorrange = q == 4 ? (0, quantile(inM(Rd), 0.99)) : rng)
+        contour!(a, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 0.6)
+        lines!(a, grid_edge(lonR, latR)...; color = :gray30, linewidth = 0.6)
+        lines!(a, box...; color = :gray20, linewidth = 0.8, linestyle = :dot)
+        limits!(a, first(lonv), last(lonv), first(latv), last(latv))
+        q == 2 && Colorbar(fig3[k, 3], h; height = Relative(0.8), width = 7)
+        q == 4 && Colorbar(fig3[k, 5], h; height = Relative(0.8), width = 7)
+    end
+    Label(fig3[k, 0], c * (comp_data.inferred[k] ? "*" : "") * @sprintf("\nRMS %.2f cm (%.1f%%)", comp_data.rms[k], 100 * comp_data.rms[k] / comp_data.S[k]);
+          rotation = π / 2, tellheight = false, font = :bold)
+end
+for q in (3, 5); Label(fig3[1, q, Top()], "cm"; padding = (0, 0, 4, 0)); end       # colourbar unit, once above each column
+Label(fig3[0, 0:5], "ROMS Amazon 900 m vs FES2022b: rms of each constituent [cm]\n" *
+      "left: area RMS over the dotted box (% of FES signal rms); grey: $(join(BATHY, ", ")) m isobaths\n" *
+      "* corrected for K2 / NU2 / P1 with the FES ratio", fontsize = 10, tellwidth = false)
+colgap!(fig3.layout, 5); rowgap!(fig3.layout, 6)
+figsave(figdir * "ROMS_FES_rms_maps$(STRIDE > 1 ? "_s$STRIDE" : "").png", fig3)
+
+## --- figure 4: phase maps per constituent: ROMS alone G_R (raw fit), FES G_F, and the phase of the low-passed
+## difference: G_B - G_F with Z_B = Z_F + LP(Z_R - Z_F) (+ = ROMS lags)
+## G unwrapped around the deep mean of ROMS (no 0/360 jump; colourbar labels mod 360); ROMS and FES share a colour scale
+fig4 = Figure(; figkw(18, 4.6K + 2)...)
+modfmt(vs) = [string(round(Int, mod(v, 360))) for v in vs]               # colourbar ticks as 0-360 phase
+for (k, c) in enumerate(comp_data.cons)
+    zr, zb, zf = comp_data.ZR[:, :, k], comp_data.ZB[:, :, k], comp_data.ZF[:, :, k]
+    Gb, Gf = unwrap(zr, zr), unwrap(zf, zr)                               # ROMS alone, FES [deg]
+    Gd = -rad2deg.(angle.(zb .* conj.(zf)))                               # LP(ROMS - FES) phase [deg], + = ROMS lags
+    inM(X) = filter(isfinite, X[comp_data.M])
+    rng = (quantile(vcat(inM(Gb), inM(Gf)), 0.001), quantile(vcat(inM(Gb), inM(Gf)), 0.999))
+    dm = quantile(abs.(inM(Gd)), 0.99)
+    for (q, X, ttl) in ((1, Gb, "ROMS phase"), (2, Gf, "FES2022b phase"), (4, Gd, "LP(ROMS − FES) phase"))
+        a = Axis(fig4[k, q]; mapax..., title = k == 1 ? ttl : "", yticklabelsvisible = q == 1, xticklabelsvisible = k == K)
+        h = heatmap!(a, lonv, latv, rg(X); nan_color = :white,
+                     colormap = q == 4 ? Reverse(:RdBu) : Reverse(:Spectral), colorrange = q == 4 ? (-dm, dm) : rng)
+        contour!(a, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 0.6)
+        lines!(a, grid_edge(lonR, latR)...; color = :gray30, linewidth = 0.6)
+        lines!(a, box...; color = :gray20, linewidth = 0.8, linestyle = :dot)
+        limits!(a, first(lonv), last(lonv), first(latv), last(latv))
+        q == 2 && Colorbar(fig4[k, 3], h; height = Relative(0.8), width = 7, tickformat = modfmt)
+        q == 4 && Colorbar(fig4[k, 5], h; height = Relative(0.8), width = 7)
+    end
+    Label(fig4[k, 0], c * (comp_data.inferred[k] ? "*" : "") * @sprintf("\ndG %+.2f°", comp_data.dG[k]);
+          rotation = π / 2, tellheight = false, font = :bold)
+end
+for q in (3, 5); Label(fig4[1, q, Top()], "deg"; padding = (0, 0, 4, 0)); end      # colourbar unit, once above each column
+Label(fig4[0, 0:5], "ROMS Amazon 900 m vs FES2022b: Greenwich phase of each constituent [deg]\n" *
+      "left: area dG = ROMS − FES over the dotted box (+ = ROMS lags)\ngrey: $(join(BATHY, ", ")) m isobaths; " *
+      "* corrected for K2 / NU2 / P1 with the FES ratio", fontsize = 10, tellwidth = false)
+colgap!(fig4.layout, 5); rowgap!(fig4.layout, 6)
+figsave(figdir * "ROMS_FES_phase_maps$(STRIDE > 1 ? "_s$STRIDE" : "").png", fig4)
+
+## --- figure 5: signed amplitude difference A_ROMS - A_FES per constituent (ROMS barotropic; red: ROMS too high)
+## titles: area mean and rms of the difference over the comparison area (dotted box)
+fig5 = Figure(; figkw(24, 20)...)
+for (k, c) in enumerate(comp_data.cons)
+    dA = abs.(comp_data.ZB[:, :, k]) .- abs.(comp_data.ZF[:, :, k])     # [cm]
+    d = filter(isfinite, dA[comp_data.M]); dm = quantile(abs.(d), 0.99)
+    r = (k - 1) ÷ 3 + 1; q = 2 * ((k - 1) % 3) + 1                       # panel row, column
+    a = Axis(fig5[r, q]; mapax..., title = @sprintf("%s\nmean %+.2f, rms %.2f cm", c * (comp_data.inferred[k] ? "*" : ""), mean(d), sqrt(mean(abs2, d))),
+             yticklabelsvisible = q == 1, xticklabelsvisible = r == 2 || k == 3)
+    h = heatmap!(a, lonv, latv, rg(dA); colormap = :balance, colorrange = (-dm, dm), nan_color = :white)
+    contour!(a, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 0.6)
+    lines!(a, grid_edge(lonR, latR)...; color = :gray30, linewidth = 0.6)
+    lines!(a, box...; color = :gray20, linewidth = 0.8, linestyle = :dot)
+    limits!(a, first(lonv), last(lonv), first(latv), last(latv))
+    Colorbar(fig5[r, q + 1], h; height = Relative(0.75), width = 8, tellheight = false)
+    Label(fig5[r, q + 1, Top()], "cm"; padding = (0, 0, 4, 0))
+end
+Label(fig5[2, 5:6], "A_ROMS − A_FES [cm]\nROMS barotropic\nred: ROMS too high\nblue: ROMS too low\ndotted box: comparison area\ngrey: $(join(BATHY, ", ")) m isobaths\n* corrected for K2 / NU2 / P1\n   with the FES ratio";
+      fontsize = 10, justification = :left, halign = :left, tellwidth = false, tellheight = false)
+Label(fig5[0, 1:6], "ROMS Amazon 900 m vs FES2022b: amplitude difference per constituent (title: mean and rms over the comparison area)", fontsize = 11, tellwidth = false)
+colgap!(fig5.layout, 6)
+rowsize!(fig5.layout, 1, Auto(1)); rowsize!(fig5.layout, 2, Auto(1))           # both panel rows the same height
+figsave(figdir * "ROMS_FES_dA_maps$(STRIDE > 1 ? "_s$STRIDE" : "").png", fig5)
+
+## --- figure 6: coherent internal-tide SSH amplitude |Z_IT| = |Z_R - Z_B| per constituent (ROMS full - barotropic)
+fig6 = Figure(; figkw(24, 20)...)
+for (k, c) in enumerate(comp_data.cons)
+    Ait = abs.(comp_data.ZIT[:, :, k])                                    # [cm]
+    r = (k - 1) ÷ 3 + 1; q = 2 * ((k - 1) % 3) + 1
+    a = Axis(fig6[r, q]; mapax..., title = @sprintf("%s\nIT rms %.2f cm", c, comp_data.it_rms[k]),
+             yticklabelsvisible = q == 1, xticklabelsvisible = r == 2 || k == 3)
+    top = quantile(filter(isfinite, Ait[Md]), 0.995)                     # colour limit from deep water only (h > hdeep)
+    h = heatmap!(a, lonv, latv, rg(Ait); colormap = :Blues, colorrange = (0, top), highclip = :black, nan_color = :white)   # shelf above: black
+    contour!(a, lonv, latv, hmap; levels = BATHY, color = RGBf(0.3, 0.3, 0.3), linewidth = 0.6)
+    lines!(a, grid_edge(lonR, latR)...; color = :gray30, linewidth = 0.6)
+    lines!(a, box...; color = :gray20, linewidth = 0.8, linestyle = :dot)
+    limits!(a, first(lonv), last(lonv), first(latv), last(latv))
+    Colorbar(fig6[r, q + 1], h; height = Relative(0.75), width = 8, tellheight = false)
+    Label(fig6[r, q + 1, Top()], "cm"; padding = (0, 0, 4, 0))
+end
+Label(fig6[2, 5:6], "|Z_ROMS − Z_ROMS,bt| [cm]\ncoherent internal-tide SSH\n(full − barotropic; barotropic =\nFES + low-pass of ROMS − FES)\ncolour limit from h > $(round(Int, comp_data.hdeep)) m;\nblack: above it (shelf)\ndotted box: comparison area\ngrey: $(join(BATHY, ", ")) m isobaths";
+      fontsize = 10, justification = :left, halign = :left, tellwidth = false, tellheight = false)
+Label(fig6[0, 1:6], "ROMS Amazon 900 m: coherent internal-tide SSH amplitude per constituent (title: rms over the comparison area)", fontsize = 11, tellwidth = false)
+colgap!(fig6.layout, 6)
+rowsize!(fig6.layout, 1, Auto(1)); rowsize!(fig6.layout, 2, Auto(1))           # both panel rows the same height
+figsave(figdir * "ROMS_IT_ssh_maps$(STRIDE > 1 ? "_s$STRIDE" : "").png", fig6)

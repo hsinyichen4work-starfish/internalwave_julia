@@ -16,4 +16,4 @@ set -o pipefail
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia -t 8 --project=. model_validation/ssh_harmonic.jl 2>&1 | tee log_files/ssh_harmonic_${STRIDE:+s${STRIDE}_}${SLURM_JOB_ID}.log
+julia -t 8 --project=. model_validation/tidal/ssh_harmonic.jl 2>&1 | tee log_files/ssh_harmonic_${STRIDE:+s${STRIDE}_}${SLURM_JOB_ID}.log

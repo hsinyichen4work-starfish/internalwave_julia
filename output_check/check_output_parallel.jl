@@ -5,7 +5,7 @@ addprocs(n_workers)
 println("running with $(nprocs() - 1) worker processes")
 
 @everywhere begin
-    using NCDatasets, CairoMakie, Dates, Statistics
+    using NCDatasets, CairoMakie, Dates, Statistics, Printf
     CairoMakie.activate!()
     include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
