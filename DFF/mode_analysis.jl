@@ -1,4 +1,4 @@
-using NCDatasets, Statistics, LinearAlgebra, Random, CairoMakie
+using NCDatasets, Statistics, LinearAlgebra, Random, FFTW, Dates, CairoMakie
 
 ENV["HDF5_USE_FILE_LOCKING"] = "FALSE"   # lustre: don't lock files that other jobs may be reading
 include("/home/hchen54/internalwave_julia/DFF/dff_run.jl")   # dff_run, run_dir, run_grid_fname, fig_dir (set by DFF_RUN)
@@ -15,6 +15,12 @@ mkpath(figure_path)
 # mooring file per run (default: the 900 m one)
 run_mooring = Dict("amazon_2700m_cmems_0801" => "roms_cmems_grd_2700m_mor_edata.nc")
 mooring_file = "/expanse/lustre/projects/uso102/hchen54/input/grid/$(get(run_mooring, dff_run, "roms_grd_900m_mor_edata.nc"))"
+puv_fname = joinpath(bcef_dir, NMODE == 1 ? "bcef_mode1_puv.nc" : "bcef_modes$(NMODE)_puv.nc")   # steps 4 and 5
+h_mask = 200.0   # [m] shelf not drawn in steps 4 and 5
+# steps to run after (1) and (2), which always run: MODE_STEPS=5 or MODE_STEPS=4,5 (default all: 3,4,5,6,7,8).
+# Step 3 reads ~200 MB of the structure file and step 5 the whole pn record once (then a small cache file).
+mode_steps = parse.(Int, split(get(ENV, "MODE_STEPS", "3,4,5,6,7,8"), ","))
+println("steps: 1, 2, ", join(mode_steps, ", "))
 
 # ============================================================================
 # (1) read the data
@@ -148,8 +154,157 @@ end
 println("saved mode_locations_section.png")
 
 # ============================================================================
+# figure helper for the sections along the mooring line (steps 5 and 6)
+# ============================================================================
+# text sized for print: the figure is fig_w units wide and meant to be paper_w_cm wide on paper,
+# so 1 pt on paper = fig_w / (paper_w_cm / 2.54 * 72) units
+fig_w, paper_w_cm = 1300, 18.0
+pt = fig_w / (paper_w_cm / 2.54 * 72)   # [units per pt], ~2.55
+mode_color = [:black, :crimson, :royalblue, :darkgreen, :orange][1:nmode]
+
+# panels along the line: top = curves on a log axis, middle = shares [%] (left out when share = nothing), bottom =
+# bathymetry with the moorings and analysis points; shelf (h < h_mask) not drawn, edge bands shaded.
+# top / share: vectors of (y along the line, label, colour, linewidth); top_hline: a reference value drawn on the top axis
+function line_section(fname, title; top, top_ylabel, share = nothing, share_ylabel = "", top_ymin = nothing,
+                      top_ylims = nothing, top_hline = nothing)
+    fig = Figure(size = (fig_w, share === nothing ? 950 : 1150), fontsize = 10pt)
+    xmax = line_km[end]
+    ax1 = Axis(fig[1, 1]; ylabel = top_ylabel, yscale = log10, title = title)
+    ax2 = share === nothing ? nothing : Axis(fig[2, 1]; ylabel = share_ylabel)
+    ax3 = Axis(fig[share === nothing ? 2 : 3, 1]; ylabel = "depth [m]", xlabel = "distance along line [km] (grid south → north)")
+    axs = filter(!isnothing, [ax1, ax2, ax3])
+    deepline = h[ix_line, :] .>= h_mask   # shelf: modes not meaningful
+    nanshelf(a) = ifelse.(deepline, a, NaN)
+    top_hline === nothing || hlines!(ax1, [top_hline]; color = :gray30, linestyle = :dot, linewidth = 1.5)
+    for (y, lab, col, lw) in top
+        lines!(ax1, line_km, nanshelf(y); color = col, linewidth = lw, label = lab)
+    end
+    if share !== nothing
+        for (y, lab, col, lw) in share
+            lines!(ax2, line_km, nanshelf(y); color = col, linewidth = lw, label = lab)
+        end
+    end
+    band!(ax3, line_km, fill(-5000.0, ny), -h[ix_line, :]; color = :gray80)
+    lines!(ax3, line_km, -h[ix_line, :]; color = :black, linewidth = 1.2)
+    # moorings on the line (thin) and the analysis points on the line (coloured, dashed)
+    for (nm, (i, j)) in zip(moor_name, moor_ij)
+        abs(i - ix_line) <= 1 || continue
+        for ax in axs
+            vlines!(ax, [line_km[j]]; color = :gray60, linewidth = 0.6)
+        end
+        text!(ax3, line_km[j], -1200; text = nm, rotation = π / 2, align = (:right, :center), fontsize = 8pt)   # in the water, from -1200 m down
+    end
+    for (k, p) in enumerate(points)
+        abs(p.i - ix_line) <= 1 && p.name in ("200 km node", "M1", "CPIES3") || continue
+        for ax in axs
+            vlines!(ax, [line_km[p.j]]; color = point_color[k], linestyle = :dash, linewidth = 1.5)
+        end
+        left = p.name == "200 km node"   # left of its line, clear of the M1 label
+        text!(ax3, line_km[p.j], -150; text = left ? p.name * " " : " " * p.name, color = point_color[k],
+              align = (left ? :right : :left, :top), fontsize = 10pt)   # in the water above the slope
+    end
+    # the edge bands of the DFF plots (edge points at each end of the line): sponge / boundary, not to be trusted
+    for ax in axs
+        vspan!(ax, [0, line_km[end - edge]], [line_km[edge], line_km[end]]; color = (:gray, 0.15))
+    end
+    if top_ylims === nothing
+        vals = filter(v -> isfinite(v) && v > 0, reduce(vcat, [nanshelf(y) for (y, _, _, _) in top]))
+        ylims!(ax1, something(top_ymin, 10^floor(log10(minimum(vals)))), 10^ceil(log10(maximum(vals))))
+    else
+        ylims!(ax1, top_ylims...)
+    end
+    share === nothing || ylims!(ax2, 0, 100)
+    ylims!(ax3, -5000, 100)
+    for ax in axs
+        xlims!(ax, 0, xmax)
+        ax.xticks = 0:50:xmax   # a tick every 50 km
+    end
+    linkxaxes!(axs...)
+    foreach(ax -> hidexdecorations!(ax; grid = false), axs[1:end-1])
+    axislegend(ax1; position = :lb, nbanks = 2, framevisible = true, backgroundcolor = (:white, 0.9))   # lower left: no data there
+    share !== nothing && length(share) > 1 && any(!isempty(l) for (_, l, _, _) in share) &&
+        axislegend(ax2; position = :rt, nbanks = 2, framevisible = true, backgroundcolor = (:white, 0.9))
+    nrow = length(axs)
+    Label(fig[nrow + 1, 1], "shelf (h < $(Int(h_mask)) m) not drawn; grey shading: $edge-point edge bands;\ngrey vertical lines: moorings on the line; dashed: analysis points"; fontsize = 8pt, tellwidth = false)
+    rowsize!(fig.layout, 1, Relative(share === nothing ? 0.6 : 0.45)); rowsize!(fig.layout, nrow, Relative(share === nothing ? 0.27 : 0.2))
+    for r in 1:nrow-1
+        rowgap!(fig.layout, r, 2pt * 10)   # room between the panels' tick labels
+    end
+    save(joinpath(figure_path, fname), fig; px_per_unit = 2)
+    println("saved $fname")
+end
+
+# ρ0 of the run (the his files' rho0, as bcef_modes_puv.jl used for p')
+function run_rho0()
+    his0 = first(filter(f -> startswith(f, "roms_his") && endswith(f, ".nc"), readdir(joinpath(run_dir, "after_joint"))))
+    NCDataset(d -> Float64(d.attrib["rho0"]), joinpath(run_dir, "after_joint", his0))
+end
+
+# pn, un or vn of every record along the mooring line: one xi column across all records is millions of scattered reads,
+# whole records are contiguous, so blocks of records (all xi, eta) are read and the line kept. Read once from the puv
+# file, then kept in a small file per tag (p: ~25 MB, uv: ~50 MB). Returns Dict(var => (eta, time, mode)), dt [h].
+function line_series(tag, vars)
+    fname = joinpath(bcef_dir, "bcef_modes$(NMODE)_$(tag)_line_xi$(ix_line).nc")
+    if isfile(fname)
+        println("\n$(join(vars, ", ")) along the line: using $fname (delete it to re-read the puv file)")
+        return NCDataset(fname) do d
+            Dict(v => Float64.(d[v][:, :, :]) for v in vars), Float64(d.attrib["dt_hours"])
+        end
+    end
+    out, dt = NCDataset(puv_fname) do d
+        dt = Dates.value(d["ocean_time"][2] - d["ocean_time"][1]) / 3.6e6   # [h]
+        nt_l = d.dim["time"]
+        o = Dict(v => zeros(ny, nt_l, nmode) for v in vars)
+        t0 = time()
+        for t1 in 1:100:nt_l
+            tb = t1:min(t1 + 99, nt_l)
+            for v in vars, n in 1:nmode
+                o[v][:, tb, n] .= nomissing(d["$v$n"][:, :, tb], NaN32)[ix_line, :, :]
+            end
+            println("  $tag: read records $(last(tb)) / $nt_l ($(round(Int, time() - t0)) s)"); flush(stdout)
+        end
+        o, dt
+    end
+    NCDataset(fname * ".tmp", "c") do d
+        defDim(d, "eta_rho", ny); defDim(d, "time", size(out[vars[1]], 2)); defDim(d, "mode", nmode)
+        for v in vars
+            defVar(d, v, Float32.(out[v]), ("eta_rho", "time", "mode");
+                   attrib = ["long_name" => "mode-n amplitude $(v)n along the line, every record (from $(basename(puv_fname)))"])
+        end
+        defVar(d, "distance", Float32.(line_km), ("eta_rho",); attrib = ["long_name" => "distance along the line from the grid-south end", "units" => "km"])
+        d.attrib["line"] = "xi = $ix_line (Julia 1-based)"
+        d.attrib["dt_hours"] = dt
+    end
+    mv(fname * ".tmp", fname; force = true)
+    println("wrote $fname")
+    out, dt
+end
+
+# time mean of x^2 in a frequency band, per point and mode: rfft in time, zero the other frequencies, back, square,
+# average. x (eta, time, mode); keepf(f in cph) -> true in the band. Returns (eta, mode) and the number of frequencies.
+function band_msq(x, keepf, dt)
+    nt_x = size(x, 2)
+    keep = keepf.((0:div(nt_x, 2)) ./ (nt_x * dt))
+    out = zeros(size(x, 1), size(x, 3))
+    for n in axes(x, 3)
+        X = rfft(x[:, :, n], 2)
+        X[:, .!keep] .= 0
+        out[:, n] .= vec(mean(irfft(X, nt_x, 2) .^ 2, dims = 2))
+    end
+    out, count(keep)
+end
+
+Hline = h[ix_line, :] .+ zeta_mean[ix_line, :]   # [m] H = h + mean zeta along the line
+
+# frequency bands of steps 5 and 7, as in the DFF: M2 = periods 9-15 h, HH = periods shorter than 9 h (hp9; up to the
+# 2 h Nyquist period of hourly output). To add a band, add a line: (name, keep(f in cph), description).
+var_bands = [("M2", f -> 1 / 15 <= f <= 1 / 9, "M2-band (9–15 h)"),
+             ("HH", f -> f > 1 / 9, "high-pass (periods < 9 h)")]
+
+# ============================================================================
 # (3) vertical profiles: N2(z) (top row) and phi_1..phi_n(z) (bottom row), one column per location + the deep average
 # ============================================================================
+if 3 in mode_steps
 # The deep average: the N2 of the deep columns (a strided sample of deep_avg) is interpolated to one depth grid in
 # metres (the pycnocline sits at a fixed depth, not at a fixed z/H) and averaged where the columns reach, and the
 # modes are solved once from that mean N2 over the median depth, with the same eigenproblem as bcef_modes_puv.jl.
@@ -262,16 +417,17 @@ let ncol = length(points) + 1, fig = Figure(size = (230 * ncol + 60, 900))
 end
 println("saved mode_profiles.png")
 
+end   # (3)
+
 # ============================================================================
 # (4) share of the baroclinic pressure variance in each mode, as a map
 # ============================================================================
+if 4 in mode_steps
 # share_n(x, y) = pvar_mode / pvar_total from bcef_modes_puv.jl: time mean of H pn^2 over time mean of ∫p'^2 dz
 # (all frequencies). Masked as the DFF plots: the edge bands and the shelf (h < h_mask).
-puv_fname = joinpath(bcef_dir, NMODE == 1 ? "bcef_mode1_puv.nc" : "bcef_modes$(NMODE)_puv.nc")
 pvar_mode, pvar_total = NCDataset(puv_fname) do d
     Float64.(d["pvar_mode"][:, :, :]), Float64.(d["pvar_total"][:, :])
 end
-h_mask = 200.0                       # [m]
 share_isobaths = [1000, 2000, 3000]  # [m]
 show_mask = (h .>= h_mask) .& (edge .< (1:nx) .<= nx - edge) .& (edge .< (1:ny)' .<= ny - edge) .& (pvar_total .> 0)
 share = [ifelse.(show_mask, 100 .* pvar_mode[:, :, n] ./ pvar_total, NaN) for n in 1:nmode]
@@ -314,3 +470,109 @@ let fig = Figure(size = (1500, 820))
     save(joinpath(figure_path, "mode_share_map.png"), fig; px_per_unit = 2)
 end
 println("saved mode_share_map.png")
+
+end   # (4)
+
+# ============================================================================
+# (5) modal pressure variance along the mooring line, per frequency band
+# ============================================================================
+if 5 in mode_steps
+# H <pn^2> (time mean over the record) of each mode in a frequency band, along the middle xi line from the grid-south
+# end, and the sum of modes 1..nmode (the modes are orthogonal, so the sum is the band's ∫p'^2 dz of these modes).
+# pn along the line (all records) is read from the puv file once and kept in a small file (~25 MB); every band is then
+# a band-pass of that file. Bands as in the DFF: M2 = periods 9-15 h, HH = periods shorter than 9 h (hp9; up to the
+# 2 h Nyquist period of hourly output). To add a band, add a line: (name, keep(f in cph), description).
+pline, dt_h = line_series("p", ["p"])
+pline = pline["p"]   # (eta, time, mode) [Pa]
+
+for (bname, bkeep, bdesc) in var_bands
+    pv, nkeep = band_msq(pline, bkeep, dt_h)
+    pv .*= Hline   # H <pn^2>
+    pv_sum = vec(sum(pv, dims = 2))
+    println("$bname band ($bdesc): $nkeep frequencies; max H<pn²> = ",
+            [round(maximum(filter(isfinite, pv[:, n])), sigdigits = 3) for n in 1:nmode], " Pa² m")
+    line_section("mode_$(bname)var_line.png", "$bdesc modal pressure variance along the mooring line\n$dff_run, xi = $ix_line";
+                 top = [(pv_sum, "modes 1-$nmode", :gray50, 3); [(pv[:, n], "mode $n", mode_color[n], 1.8) for n in 1:nmode]],
+                 top_ylabel = "H ⟨pₙ²⟩  [Pa² m]",
+                 share = [(100 .* pv[:, n] ./ pv_sum, "", mode_color[n], 1.8) for n in 1:nmode],
+                 share_ylabel = "share of modes 1-$nmode [%]",
+                 top_ymin = 10^floor(log10(minimum(filter(v -> isfinite(v) && v > 0, pv[h[ix_line, :] .>= h_mask, nmode])))))
+end
+end   # (5)
+
+# ============================================================================
+# (6) residual of the modal fit along the mooring line: total - modes 1..nmode (all frequencies)
+# ============================================================================
+if 6 in mode_steps
+# pvar_total = time mean of ∫p'^2 dz, pvar_mode = time mean of H pn^2 (bcef_modes_puv.jl, all frequencies; a band-passed
+# total would need p' in 3-D, not saved). The modes are orthogonal, so the residual total - Σ_1^nmode H pn^2 is the
+# variance in the higher modes (nmode+1 ...). Shares here are of the total (as the share map), not of modes 1..nmode.
+pm_line, pt_line = NCDataset(puv_fname) do d
+    Float64.(d["pvar_mode"][ix_line, :, :]), Float64.(d["pvar_total"][ix_line, :])   # (eta, mode), (eta)
+end
+pm_sum = vec(sum(pm_line, dims = 2))
+resid = pt_line .- pm_sum
+deep_l = (h[ix_line, :] .>= h_mask) .& (edge .< (1:ny) .<= ny - edge)
+println("\nresidual total - modes 1-$nmode along the line (deep, inside the edges): ",
+        "$(round(100 * sum(resid[deep_l]) / sum(pt_line[deep_l]), digits = 1)) % of the total; ",
+        "range $(round.(100 .* extrema(resid[deep_l] ./ pt_line[deep_l]), digits = 1)) %; ",
+        "min residual $(round(minimum(resid[deep_l]), sigdigits = 3)) Pa² m (≥ 0 expected)")
+line_section("mode_residual_line.png", "modal-fit residual along the mooring line (all frequencies)\n$dff_run, xi = $ix_line";
+             top = [(pt_line, "total ∫p′²dz", :gray50, 3), (pm_sum, "modes 1-$nmode", :black, 1.8),
+                    (max.(resid, 0), "residual (modes > $nmode)", :darkorange, 2.2)],
+             top_ylabel = "time mean  [Pa² m]",
+             share = [[(100 .* pm_line[:, n] ./ pt_line, "mode $n", mode_color[n], 1.8) for n in 1:nmode];
+                      (100 .* resid ./ pt_line, "residual", :darkorange, 2.2)],
+             share_ylabel = "share of the total [%]")
+end   # (6)
+
+# ============================================================================
+# (7) modal kinetic energy along the mooring line, per frequency band
+# ============================================================================
+if 7 in mode_steps
+# KEn = ½ ρ0 H <un² + vn²> [J m-2], the depth-integrated kinetic energy of mode n (the modes are orthogonal, (1/H) ∫ φm φn dz
+# = δmn, so ∫ ½ρ0 (u'² + v'²) dz = Σn ½ρ0 H (un² + vn²)), band-passed as in step 5; ρ0 as in bcef_modes_puv.jl (his rho0).
+rho0 = run_rho0()
+uv, dt_uv = line_series("uv", ["u", "v"])
+for (bname, bkeep, bdesc) in var_bands
+    msq_u, nkeep = band_msq(uv["u"], bkeep, dt_uv)
+    msq_v, _ = band_msq(uv["v"], bkeep, dt_uv)
+    ke = 0.5 .* rho0 .* Hline .* (msq_u .+ msq_v)   # (eta, mode) [J m-2]
+    ke_sum = vec(sum(ke, dims = 2))
+    println("$bname band KE ($nkeep frequencies, ρ0 = $rho0): max ", [round(maximum(filter(isfinite, ke[:, n])), sigdigits = 3) for n in 1:nmode], " J/m²")
+    line_section("mode_$(bname)KE_line.png", "$bdesc modal kinetic energy along the mooring line\n$dff_run, xi = $ix_line";
+                 top = [(ke_sum, "modes 1-$nmode", :gray50, 3); [(ke[:, n], "mode $n", mode_color[n], 1.8) for n in 1:nmode]],
+                 top_ylabel = "KEₙ = ½ρ₀H⟨uₙ² + vₙ²⟩  [J m⁻²]",
+                 share = [(100 .* ke[:, n] ./ ke_sum, "", mode_color[n], 1.8) for n in 1:nmode],
+                 share_ylabel = "share of modes 1-$nmode [%]",
+                 top_ymin = 10^floor(log10(minimum(filter(v -> isfinite(v) && v > 0, ke[h[ix_line, :] .>= h_mask, nmode])))))
+end
+end   # (7)
+
+# ============================================================================
+# (8) KE / pressure ratio along the mooring line, per frequency band
+# ============================================================================
+if 8 in mode_steps
+# Rn = KEn / [H <pn²> / (2 ρ0 cn²)]. For one progressive wave without rotation un = pn / (ρ0 cn), so Rn = 1; with rotation
+# (cn without rotation, as here) a progressive wave gives (ω² + f²) / (ω² − f²), ≈ 1 at these latitudes (f²/ω² < 0.01 for M2).
+# A standing (or partly standing) pattern moves pressure and velocity apart: Rn > 1 near pressure nodes (strong currents,
+# weak p), Rn < 1 near pressure antinodes; its average over a wavelength stays ~1.
+rho0 = run_rho0()
+p8, dt8 = line_series("p", ["p"])
+uv8, _ = line_series("uv", ["u", "v"])
+c_line = c[ix_line, :, :]   # (eta, mode) [m/s]
+for (bname, bkeep, bdesc) in var_bands
+    pp, _ = band_msq(p8["p"], bkeep, dt8)
+    uu, _ = band_msq(uv8["u"], bkeep, dt8)
+    vv, _ = band_msq(uv8["v"], bkeep, dt8)
+    ke = 0.5 .* rho0 .* Hline .* (uu .+ vv)              # KEn [J m-2]
+    pe_c = Hline .* pp ./ (2 .* rho0 .* c_line .^ 2)     # H <pn²> / (2 ρ0 cn²) [J m-2]
+    R = ke ./ pe_c
+    deep_l = (h[ix_line, :] .>= h_mask) .& (edge .< (1:ny) .<= ny - edge)
+    println("$bname band: median Rn (deep, inside the edges) = ", [round(median(R[deep_l, n]), digits = 2) for n in 1:nmode],
+            ", range ", [round.(extrema(R[deep_l, n]), digits = 2) for n in 1:nmode])
+    line_section("mode_$(bname)ratio_line.png", "$bdesc: KEₙ / [H⟨pₙ²⟩ / (2ρ₀cₙ²)] along the mooring line (1 = one progressive wave)\n$dff_run, xi = $ix_line";
+                 top = [(R[:, n], "mode $n", mode_color[n], 1.8) for n in 1:nmode],
+                 top_ylabel = "Rₙ = KEₙ / [H⟨pₙ²⟩ / (2ρ₀cₙ²)]", top_ylims = (0.1, 10), top_hline = 1.0)
+end
+end   # (8)
