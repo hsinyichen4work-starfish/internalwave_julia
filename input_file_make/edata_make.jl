@@ -17,8 +17,8 @@
 using NCDatasets
 
 ## settings
-grid_file  = "/home/hsinyi/roms_data/grid/roms_cmems_grd_2700m.nc"
-edata_file = "/home/hsinyi/roms_data/grid/roms_cmems_grd_2700m_mor_edata.nc"
+grid_file  = "/home/hsinyi/roms_data/grid/new_design/roms_grd_2700m_1104.nc"
+edata_file = "/home/hsinyi/roms_data/grid/new_design/roms_grd_2700m_1104_mor_edata.nc"
 
 period = 360.0
 mooring_vars = "zeta, temp, salt, u, v"

@@ -43,6 +43,8 @@ function grd_build(cfg)
 
     # parent grid bath (positive down)
     pgrid = read_nc_fun(cfg.parent_grid)
+    # a ROMS parent grid stores its land mask as mask_rho (NCOM: mask)
+    haskey(pgrid, "mask") || (pgrid["mask"] = pgrid["mask_rho"])
     wet = pgrid["mask"] .== 1
     if mean(filter(!isnan, pgrid["h"][wet])) < 0
         pgrid["h"] = -pgrid["h"]

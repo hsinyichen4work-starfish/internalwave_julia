@@ -101,12 +101,12 @@ moor_label_left = ("french", "M1", "CPIES1", "CPIES5", "CPIES9")
 # marks every mooring on the map; z = 0 puts them on the same flat plane as
 # plot_curvilinear!'s surface, and overdraw keeps them from being hidden
 # behind that surface. text! writes each mooring's own name next to its marker.
-function add_mooring!(ax; labels = true)
+function add_mooring!(ax; labels = true, scale = 1)
     for g in unique(moor_group)
         k = findall(==(g), moor_group)
         st = get(moor_style, g, (marker = :rect, markersize = 6, color = :white))
         scatter!(ax, Point3f.(moor_lon[k], moor_lat[k], 0);
-                 marker = st.marker, markersize = st.markersize, color = st.color,
+                 marker = st.marker, markersize = scale * st.markersize, color = st.color,
                  strokecolor = :black, strokewidth = 0.75, overdraw = true, label = g)
     end
     labels || return
@@ -197,3 +197,132 @@ scatter!(ax, Point3f(mid_extN[1], mid_extN[2], 0); marker = :xcross, markersize 
 Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 2, framevisible = false)
 ax.protrusions = (30, 30, 50, 30)
 figsave(joinpath(figure_path, "bathymetry_mooring_roms900m_extN$(n_ext_n).png"), fig)
+
+## test region: 900m ROMS extended +222 cells W/E/S plus another ~200 km on each
+# of those sides (to take in the river to the south), and +666 cells N.
+# The extra cells keep nx and ny multiples of 3, so the 2700 m grid has a whole number of points.
+n_ext_we = n_ext + 222   # +199.8 km beyond the +222
+n_ext_s  = n_ext + 223   # +200.7 km beyond the +222
+lon_rho_roms_ext200 = extend_grid(Float64.(coalesce.(lon_rho_roms, NaN)); west = n_ext_we, east = n_ext_we, south = n_ext_s, north = n_ext_n)
+lat_rho_roms_ext200 = extend_grid(Float64.(coalesce.(lat_rho_roms, NaN)); west = n_ext_we, east = n_ext_we, south = n_ext_s, north = n_ext_n)
+ni_200, nj_200 = size(lon_rho_roms_ext200)
+ic, jc = (ni_200 + 1) ÷ 2 : ni_200 ÷ 2 + 1, (nj_200 + 1) ÷ 2 : nj_200 ÷ 2 + 1
+mid_ext200 = [mean(lon_rho_roms_ext200[ic, jc]), mean(lat_rho_roms_ext200[ic, jc])]
+nx_900_200, ny_900_200 = 684 + 2n_ext_we, 854 + n_ext_s + n_ext_n
+nx_2700_200, ny_2700_200 = nx_900_200 ÷ 3, ny_900_200 ÷ 3
+println("test region middle point: lon = ", mid_ext200[1], ", lat = ", mid_ext200[2])
+println("test region size at 900 m: ", nx_900_200, " × ", ny_900_200, "; at 2700 m: ", nx_2700_200, " × ", ny_2700_200)
+println("test region extent: lon ", extrema(lon_rho_roms_ext200), ", lat ", extrema(lat_rho_roms_ext200))
+
+# 900m ROMS domain extended on all four sides by +56 cells (~50 km)
+n_red = 56
+lon_rho_roms_red50 = extend_grid(Float64.(coalesce.(lon_rho_roms, NaN)); west = n_red, east = n_red, south = n_red, north = n_red)
+lat_rho_roms_red50 = extend_grid(Float64.(coalesce.(lat_rho_roms, NaN)); west = n_red, east = n_red, south = n_red, north = n_red)
+
+# test 300 m grid (cyan): each side halfway between the +50 km red domain and the orange box.
+# Both grids share the same rotation (~-34°), so the boundaries are worked out in a local
+# km frame (equirectangular around the red domain's center) with axes along the grid's xi/eta.
+lon0, lat0 = mean(lon_rho_roms_red50), mean(lat_rho_roms_red50)
+R_km = 6371.0
+toxy(lon, lat) = (deg2rad.(lon .- lon0) .* R_km .* cosd(lat0), deg2rad.(lat .- lat0) .* R_km)
+tolonlat(x, y) = (lon0 .+ rad2deg.(x ./ (R_km * cosd(lat0))), lat0 .+ rad2deg.(y ./ R_km))
+jm = size(lon_rho_roms_red50, 2) ÷ 2
+x1, y1 = toxy(lon_rho_roms_red50[1, jm], lat_rho_roms_red50[1, jm])
+x2, y2 = toxy(lon_rho_roms_red50[end, jm], lat_rho_roms_red50[end, jm])
+u = [x2 - x1, y2 - y1]; u ./= hypot(u...)   # along xi
+v = [-u[2], u[1]]                            # along eta
+function st_bounds(lon, lat)
+    x, y = toxy(lon, lat)
+    s, t = x .* u[1] .+ y .* u[2], x .* v[1] .+ y .* v[2]
+    return extrema(s), extrema(t)
+end
+(s_r, t_r), (s_o, t_o) = st_bounds(lon_rho_roms_red50, lat_rho_roms_red50), st_bounds(lon_rho_roms100, lat_rho_roms100)
+s_c = ((s_r[1] + s_o[1]) / 2, (s_r[2] + s_o[2]) / 2)
+t_c = ((t_r[1] + t_o[1]) / 2, (t_r[2] + t_o[2]) / 2)
+corner(s, t) = tolonlat(s * u[1] + t * v[1], s * u[2] + t * v[2])
+cyan_c = [corner(s_c[1], t_c[1]), corner(s_c[2], t_c[1]), corner(s_c[2], t_c[2]), corner(s_c[1], t_c[2]), corner(s_c[1], t_c[1])]
+lon_cyan, lat_cyan = first.(cyan_c), last.(cyan_c)
+mid_cyan = corner(sum(s_c) / 2, sum(t_c) / 2)
+nx_cyan, ny_cyan = round(Int, (s_c[2] - s_c[1]) / 0.3), round(Int, (t_c[2] - t_c[1]) / 0.3)
+println("cyan 300 m grid: ", round(s_c[2] - s_c[1], digits = 1), " km × ", round(t_c[2] - t_c[1], digits = 1),
+        " km -> nx × ny = ", nx_cyan, " × ", ny_cyan, "; middle point lon = ", mid_cyan[1], ", lat = ", mid_cyan[2])
+
+# interior grid points (nx × ny, as passed to the grid build) = rho points minus the 2 edge points
+npts(lon) = "$(size(lon, 1) - 2) × $(size(lon, 2) - 2)"
+# the orange box redesigned at 300 m: the 100 m grid's footprint in 300 m cells
+npts300 = "$(round(Int, (size(lon_rho_roms100, 1) - 2) * 100 / 300)) × $(round(Int, (size(lon_rho_roms100, 2) - 2) * 100 / 300))"
+println("orange region at 300 m: ", npts300)
+fig = Figure(; figkw(18, 17.2)...)
+ax = topdown_axis3(fig[1, 1]; title = "Bathymetry, test region")
+sp = plot_curvilinear!(ax, lon_rho_27, lat_rho_27, -h;
+                       colormap = :deep, colorrange = (0, 5500), nan_color = :gray80)
+Colorbar(fig[1, 2], sp, label = "Depth (m)")
+for (lon, lat, color, linestyle, label) in
+        ((lon_rho_roms_ext200, lat_rho_roms_ext200, :green, :solid, "2700m ROMS ($(nx_2700_200) × $(ny_2700_200) grid points)"),
+         (lon_rho_roms_red50, lat_rho_roms_red50, :red,    :solid,  "900m ROMS, +$(round(Int, n_red * 0.9)) km all sides ($(npts(lon_rho_roms_red50)) grid points)"),
+         (lon_rho_roms100,    lat_rho_roms100,    :orange, :solid, "100m resolution ROMS ($(npts(lon_rho_roms100)) grid points)"))
+    lon_b, lat_b = grid_boundary(lon, lat)
+    lines!(ax, lon_b, lat_b, zeros(length(lon_b)); color, linestyle, linewidth = 1, label)
+end
+lines!(ax, lon_cyan, lat_cyan, zeros(length(lon_cyan)); color = :blue, linewidth = 1,
+       label = "300m ROMS, new ($(nx_cyan) × $(ny_cyan) grid points)")
+add_mooring!(ax; labels = false, scale = 0.6)
+Legend(fig[2, 1:2], ax; orientation = :horizontal, nbanks = 4, framevisible = false)
+ax.protrusions = (30, 30, 50, 30)
+figsave(joinpath(figure_path, "regiontest.png"), fig)
+
+## grid design summary for the four regions on regiontest.png -> /home/hsinyi/data_notm/grid_design.txt
+# angle of the grid's xi axis from east (deg), from the edge running through the middle row
+function xi_angle(lon, lat)
+    jm = size(lon, 2) ÷ 2
+    dlon, dlat = lon[end, jm] - lon[1, jm], lat[end, jm] - lat[1, jm]
+    return atand(dlat, dlon * cosd((lat[end, jm] + lat[1, jm]) / 2))
+end
+grid_center(lon, lat) = begin
+    ni, nj = size(lon)
+    ic, jc = (ni + 1) ÷ 2 : ni ÷ 2 + 1, (nj + 1) ÷ 2 : nj ÷ 2 + 1
+    (mean(lon[ic, jc]), mean(lat[ic, jc]))
+end
+# corners in grid order: (xi, eta) = (1, 1), (end, 1), (end, end), (1, end)
+grid_corners(lon, lat) = [(lon[i, j], lat[i, j]) for (i, j) in ((1, 1), (size(lon, 1), 1), (size(lon, 1), size(lon, 2)), (1, size(lon, 2)))]
+rot_design = -34.21122878190815   # rot_ang from gid_middle(2) in function/input_nc (InputNC is not loaded here)
+design = [
+    (name = "2700m ROMS (green)", dx = 2700, nx = nx_2700_200, ny = ny_2700_200,
+     ang = xi_angle(lon_rho_roms_ext200, lat_rho_roms_ext200), mid = Tuple(mid_ext200),
+     corners = grid_corners(lon_rho_roms_ext200, lat_rho_roms_ext200),
+     note = "900m ROMS grid extended +$(n_ext_we) cells W/E, +$(n_ext_s) S, +$(n_ext_n) N (900 m cells)"),
+    (name = "900m ROMS, +50 km all sides (red)", dx = 900, nx = size(lon_rho_roms_red50, 1) - 2, ny = size(lon_rho_roms_red50, 2) - 2,
+     ang = xi_angle(lon_rho_roms_red50, lat_rho_roms_red50), mid = grid_center(lon_rho_roms_red50, lat_rho_roms_red50),
+     corners = grid_corners(lon_rho_roms_red50, lat_rho_roms_red50),
+     note = "900m ROMS grid (roms_grd_900m.nc) extended +$(n_red) cells on all four sides"),
+    (name = "300m ROMS, new (blue)", dx = 300, nx = nx_cyan, ny = ny_cyan,
+     ang = atand(u[2], u[1]), mid = Tuple(mid_cyan),
+     corners = [(lon_cyan[k], lat_cyan[k]) for k in 1:4],
+     note = "each side halfway between the red and orange boxes; size estimated in a flat local km frame"),
+    (name = "100m ROMS (orange)", dx = 100, nx = size(lon_rho_roms100, 1) - 2, ny = size(lon_rho_roms100, 2) - 2,
+     ang = xi_angle(lon_rho_roms100, lat_rho_roms100), mid = grid_center(lon_rho_roms100, lat_rho_roms100),
+     corners = grid_corners(lon_rho_roms100, lat_rho_roms100),
+     note = "existing grid roms_grd_100m.nc"),
+]
+fmt(x) = @sprintf("%.6f", x)
+open("/home/hsinyi/data_notm/grid_design.txt", "w") do io
+    println(io, "# Grid design for the regions on regiontest.png (written by other/figure_of_region_new.jl, ", Dates.today(), ")")
+    println(io, "# lon in degrees East (-180..180), lat in degrees North")
+    println(io, "# rotation: angle of the grid's xi axis from east, measured from each outline (deg)")
+    println(io, "# design rotation from gid_middle(2) (rot_ang the grid build uses): ", fmt(rot_design), " deg")
+    println(io, "# corners: grid order (xi, eta) = (1,1) (end,1) (end,end) (1,end); outer rho points for grids, box corners for the new 300 m")
+    println(io, "# nx, ny: interior grid points, as passed to the grid build")
+    for d in design
+        println(io)
+        println(io, "[", d.name, "]")
+        println(io, "resolution       = ", d.dx, " m")
+        println(io, "nx x ny          = ", d.nx, " x ", d.ny, "   (", d.nx * d.ny, " points)")
+        println(io, "rotation         = ", fmt(d.ang), " deg")
+        println(io, "mid (lon, lat)   = ", fmt(d.mid[1]), ", ", fmt(d.mid[2]))
+        for (k, c) in zip(("corner (1,1)  ", "corner (end,1)", "corner (end,end)", "corner (1,end)"), d.corners)
+            println(io, rpad(k, 17), "= ", fmt(c[1]), ", ", fmt(c[2]))
+        end
+        println(io, "note             = ", d.note)
+    end
+end
+println("wrote /home/hsinyi/data_notm/grid_design.txt")

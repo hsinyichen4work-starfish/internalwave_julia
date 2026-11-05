@@ -1,4 +1,4 @@
-using NCDatasets, CairoMakie, Dates, Statistics, GibbsSeaWater, DSP
+using NCDatasets, CairoMakie, Dates, Statistics, GibbsSeaWater, DSP, Printf
 CairoMakie.activate!()
 include("/home/hsinyi/Documents/Julia/function/load_all.jl")
 include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
@@ -11,6 +11,17 @@ joint_ext_path = "/home/hsinyi/roms_data/mooring_ext_model/1008/mooring_merged"
 NCOM_mooring_path = "/home/hsinyi/roms_data/NCOM_mooring"
 CMEMS_mooring_path = "/home/hsinyi/roms_data/GLOBAL_mooring"
 HYCOM_mooring_path = "/home/hsinyi/roms_data/HYCOM_mooring"
+
+# NCOM / HYCOM version: "" = unfiltered, "gf100km" = 100 km spatial Gaussian filter
+# (mooring_extract_gaussianfilt.jl). Also from the command line:
+#   julia mooring_loc_model_comp.jl gf100km
+filt = isempty(ARGS) ? "" : ARGS[1]
+if !isempty(filt)
+    NCOM_mooring_path  *= "_$filt"
+    HYCOM_mooring_path *= "_$filt"
+    figure_path        *= "_$filt"
+end
+filt_note = isempty(filt) ? "" : "\n[NCOM, HYCOM: $(replace(filt, "gf" => "")) Gaussian filtered]"
 mkpath(figure_path)
 
 ## switch for the compare loc
@@ -274,12 +285,12 @@ function plot_station_grid(q; clim = nothing, colormap, levels = nothing, cblabe
         append!(panels, [getproperty(hycom[name], q)[hycom[name].z .<= zlim_comp[2], :] for name in plot_stations])
         clim, levels = clim_5pct(panels; symmetric, zero_min)
     end
-    fig = Figure(; figkw(18, 12.4)...)
+    fig = Figure(; figkw(18, 12.4)..., figure_padding = (4, 8, 4, 4))
     axs, hm, worst = Axis[], nothing, 0.0
     for (row, (mname, _)) in enumerate(plot_models), (col, name) in enumerate(plot_stations)
         g = data[mname][name]
         f = getproperty(g, q)
-        ax = Axis(fig[row, col]; title = row == 1 ? name : "", titlesize = 13,
+        ax = Axis(fig[row, col]; title = row == 1 ? name : "", titlesize = 9,
             ylabel = col == 1 ? "$mname\nDepth (m)" : "", yreversed = true, xticks = xticks,
             xgridvisible = false, ygridvisible = false)
         hm = heatmap!(ax, tday(g.time), z, f'; colormap = colormap, colorrange = clim,
@@ -307,12 +318,12 @@ function plot_station_grid(q; clim = nothing, colormap, levels = nothing, cblabe
         gl = fig[nr + 1, col] = GridLayout()
         for (k, t) in enumerate(hy.time)
             f = getproperty(hy, q)[:, k]
-            ax = Axis(gl[1, k]; title = Dates.format(t, "mm/dd HH:MM"), titlesize = 9, titlecolor = :darkcyan,
-                yreversed = true, xticks = range(clim..., length = 3), xticklabelsize = 7,
+            ax = Axis(gl[1, k]; title = Dates.format(t, "mm/dd"), titlesize = 7, titlecolor = :darkcyan,
+                yreversed = true, xticks = range(clim..., length = 3), xticklabelsize = 6,
                 xticklabelrotation = pi / 4, ylabel = (col == 1 && k == 1) ? "HYCOM\nDepth (m)" : "")
             lines!(ax, (q == :dir ? break_wraps(f, hy.z) : (f, hy.z))...; color = (:gray40, 0.8), linewidth = 1)
             scatter!(ax, f, hy.z; color = f, colormap = colormap, colorrange = clim,
-                     lowclip = :black, highclip = :magenta, markersize = 16, strokecolor = :black, strokewidth = 0.3)
+                     lowclip = :black, highclip = :magenta, markersize = 5, strokecolor = :black, strokewidth = 0.3)
             xlims!(ax, clim...)
             (col > 1 || k > 1) && hideydecorations!(ax; ticks = false, grid = false)
             push!(paxs, ax)
@@ -323,7 +334,7 @@ function plot_station_grid(q; clim = nothing, colormap, levels = nothing, cblabe
     ylims!(axs[1], zlim_comp[2], zlim_comp[1])   # again: linking would otherwise widen to the full HYCOM depth
     rowsize!(fig.layout, nr + 1, Relative(0.3))
     Colorbar(fig[1:nr+1, nc + 1], hm; label = cblabel, ticks = levels)
-    Label(fig[0, :], title, fontsize = 14)
+    Label(fig[0, :], title * filt_note, fontsize = 11, tellwidth = false)
     outname = joinpath(figure_path, fname)
     figsave(outname, fig)
     println("saved ", outname, "  clim = ", clim, ", clipped ≤ ", round(100worst, digits=1), "% per panel")
@@ -475,7 +486,7 @@ end
 # One panel per model, side by side; time runs down the page (top = t0). Moorings on the line are marked
 # with grey dashed lines and named on a second x axis along the top; HYCOM snapshot times are cyan horizontal lines.
 function plot_hovmoller(data, q; clim, ticks = Makie.automatic, colormap, cblabel, title, fname)
-    fig = Figure(; figkw(18, 18 * 950 / (550 * length(hov_models) + 150))...)
+    fig = Figure(; figkw(18, 18 * 950 / (550 * length(hov_models) + 150))..., figure_padding = (4, 8, 4, 4))
     axs, hm, worst = Axis[], nothing, 0.0
     for (col, m) in enumerate(hov_models)
         h = data[m]
@@ -492,12 +503,12 @@ function plot_hovmoller(data, q; clim, ticks = Makie.automatic, colormap, cblabe
         # moorings on the line: longitude at their along-line distance
         mlon = [lon[clamp(searchsortedfirst(hov[m].dist, d), 1, length(lon))] for d in hov[m].mooring_dist]
         vlines!(ax, mlon; color = (:gray20, 0.6), linestyle = :dash, linewidth = 1)
-        axt = Axis(fig[1, col]; xaxisposition = :top, xticks = (mlon, hov[m].mooring), xticklabelsize = 8,
+        axt = Axis(fig[1, col]; xaxisposition = :top, xticks = (mlon, hov[m].mooring), xticklabelsize = 6,
             xticklabelrotation = pi / 3, xgridvisible = false, ygridvisible = false)   # mooring names on top
         hidespines!(axt); hideydecorations!(axt)
         linkxaxes!(ax, axt)
         hlines!(ax, tday(hycom_time[plot_stations[1]]); color = :cyan, linewidth = 2, linestyle = :dash)
-        Label(fig[0, col], m, fontsize = 13, font = :bold, tellwidth = false)   # tellwidth = false: else the column shrinks to the label
+        Label(fig[0, col], m, fontsize = 9, font = :bold, tellwidth = false)   # tellwidth = false: else the column shrinks to the label
         col > 1 && hideydecorations!(ax; ticks = false)
         push!(axs, ax)
     end
@@ -505,7 +516,7 @@ function plot_hovmoller(data, q; clim, ticks = Makie.automatic, colormap, cblabe
     ylims!(axs[1], tday(t1), tday(t0))
     xlims!(axs[1], extrema(hov[hov_models[1]].lon)...)   # exactly the ends of the line, M1 to CPIES7
     Colorbar(fig[1, length(hov_models) + 1], hm; label = cblabel, ticks = ticks)
-    Label(fig[-1, :], title, fontsize = 14)
+    Label(fig[-1, :], title * filt_note, fontsize = 11, tellwidth = false)
     outname = joinpath(figure_path, fname)
     figsave(outname, fig)
     println("saved ", outname, "  clim = ", clim, ", clipped ≤ ", round(100worst, digits=1), "% per panel")
@@ -644,7 +655,7 @@ end
 # kind = :raw or :lp, k = snapshot index
 function plot_transect_snap(kind, q, k; clim, levels, colormap, contours = true, contour_color = (:white, 0.6),
                             cblabel, title, fname)
-    fig = Figure(; figkw(18, 6.5)...)
+    fig = Figure(; figkw(18, 8.5)..., figure_padding = (4, 8, 4, 4))
     axs, hm, worst = Axis[], nothing, 0.0
     for (col, m) in enumerate(tr_models)
         s = sec[m]
@@ -658,12 +669,12 @@ function plot_transect_snap(kind, q, k; clim, levels, colormap, contours = true,
         # moorings on the line, named on a second x axis along the top (as in the Hovmöller figures)
         mlon = [s.lon[clamp(searchsortedfirst(s.dist, d), 1, length(s.lon))] for d in s.mooring_dist]
         vlines!(ax, mlon; color = (:gray20, 0.6), linestyle = :dash, linewidth = 1)
-        axt = Axis(fig[1, col]; xaxisposition = :top, xticks = (mlon, s.mooring), xticklabelsize = 8,
+        axt = Axis(fig[1, col]; xaxisposition = :top, xticks = (mlon, s.mooring), xticklabelsize = 6,
             xticklabelrotation = pi / 3, xgridvisible = false, ygridvisible = false)
         hidespines!(axt); hideydecorations!(axt)
         linkxaxes!(ax, axt)
-        lbl = m == "HYCOM" && kind == :lp ? "$m (snapshot, unfiltered)" : m
-        Label(fig[0, col], "$lbl  $(Dates.format(s.time[k], "mm/dd HH:MM"))", fontsize = 13, font = :bold, tellwidth = false)
+        lbl = m == "HYCOM" && kind == :lp ? "$m (snapshot)" : m
+        Label(fig[0, col], "$lbl  $(Dates.format(s.time[k], "mm/dd HH:MM"))", fontsize = 9, font = :bold, tellwidth = false)
         col > 1 && hideydecorations!(ax; ticks = false)
         push!(axs, ax)
     end
@@ -671,7 +682,7 @@ function plot_transect_snap(kind, q, k; clim, levels, colormap, contours = true,
     ylims!(axs[1], zlim_tr[2], zlim_tr[1])
     xlims!(axs[1], extrema(sec[tr_models[1]].lon)...)
     Colorbar(fig[1, length(tr_models) + 1], hm; label = cblabel, ticks = levels)
-    Label(fig[-1, :], title, fontsize = 14)
+    Label(fig[-1, :], title * filt_note, fontsize = 11, tellwidth = false)
     outname = joinpath(tr_path, fname)
     figsave(outname, fig)
     println("saved ", outname, "  clim = ", clim, ", clipped ≤ ", round(100worst, digits=1), "% per panel")
@@ -704,7 +715,7 @@ for (q, long, cblabel, cmap, ckw, ccol) in tr_vars
               contour_color = something(ccol, (:white, 0.6)), cblabel = cblabel)
         plot_transect_snap(:raw, q, k; kw..., title = "$long along $tr_title, $dstr (HYCOM snapshot)",
             fname = "tr_$(q)_$(dtag).png")
-        plot_transect_snap(:lp, q, k; kw..., title = "$long along $tr_title, $dstr, $tc h low-pass (HYCOM unfiltered)",
+        plot_transect_snap(:lp, q, k; kw..., title = "$long along $tr_title, $dstr, $tc h low-pass (HYCOM not low-passed)",
             fname = "tr_$(q)_$(dtag)_lp$(tc)h.png")
     end
 end
