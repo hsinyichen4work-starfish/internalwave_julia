@@ -251,22 +251,34 @@ function line_series(tag, vars)
             Dict(v => Float64.(d[v][:, :, :]) for v in vars), Float64(d.attrib["dt_hours"])
         end
     end
-    out, dt = NCDataset(puv_fname) do d
-        dt = Dates.value(d["ocean_time"][2] - d["ocean_time"][1]) / 3.6e6   # [h]
-        nt_l = d.dim["time"]
-        o = Dict(v => zeros(ny, nt_l, nmode) for v in vars)
-        t0 = time()
-        for t1 in 1:100:nt_l
-            tb = t1:min(t1 + 99, nt_l)
-            for v in vars, n in 1:nmode
-                o[v][:, tb, n] .= nomissing(d["$v$n"][:, :, tb], NaN32)[ix_line, :, :]
+    dt, nt_l = NCDataset(puv_fname) do d
+        Dates.value(d["ocean_time"][2] - d["ocean_time"][1]) / 3.6e6, d.dim["time"]   # [h], records
+    end
+    out = Dict(v => zeros(ny, nt_l, nmode) for v in vars)
+    t0 = time()
+    for t1 in 1:100:nt_l
+        tb = t1:min(t1 + 99, nt_l)
+        # Lustre timeouts show up as HDF errors: reopen the file and retry the block (wait 2, 4, 8, ... min)
+        for attempt in 1:6
+            try
+                NCDataset(puv_fname) do d
+                    for v in vars, n in 1:nmode
+                        out[v][:, tb, n] .= nomissing(d["$v$n"][:, :, tb], NaN32)[ix_line, :, :]
+                    end
+                end
+                break
+            catch e
+                attempt == 6 && rethrow()
+                wait_s = 60 * 2^attempt
+                println("  $tag: records $(first(tb))-$(last(tb)) failed ($(first(sprint(showerror, e), 80))); retry $attempt in $(wait_s ÷ 60) min")
+                flush(stdout)
+                sleep(wait_s)
             end
-            println("  $tag: read records $(last(tb)) / $nt_l ($(round(Int, time() - t0)) s)"); flush(stdout)
         end
-        o, dt
+        println("  $tag: read records $(last(tb)) / $nt_l ($(round(Int, time() - t0)) s)"); flush(stdout)
     end
     NCDataset(fname * ".tmp", "c") do d
-        defDim(d, "eta_rho", ny); defDim(d, "time", size(out[vars[1]], 2)); defDim(d, "mode", nmode)
+        defDim(d, "eta_rho", ny); defDim(d, "time", nt_l); defDim(d, "mode", nmode)
         for v in vars
             defVar(d, v, Float32.(out[v]), ("eta_rho", "time", "mode");
                    attrib = ["long_name" => "mode-n amplitude $(v)n along the line, every record (from $(basename(puv_fname)))"])
@@ -568,9 +580,9 @@ for (bname, bkeep, bdesc) in var_bands
     ke = 0.5 .* rho0 .* Hline .* (uu .+ vv)              # KEn [J m-2]
     pe_c = Hline .* pp ./ (2 .* rho0 .* c_line .^ 2)     # H <pn²> / (2 ρ0 cn²) [J m-2]
     R = ke ./ pe_c
-    deep_l = (h[ix_line, :] .>= h_mask) .& (edge .< (1:ny) .<= ny - edge)
-    println("$bname band: median Rn (deep, inside the edges) = ", [round(median(R[deep_l, n]), digits = 2) for n in 1:nmode],
-            ", range ", [round.(extrema(R[deep_l, n]), digits = 2) for n in 1:nmode])
+    deep8 = (h[ix_line, :] .>= h_mask) .& (edge .< (1:ny) .<= ny - edge)
+    println("$bname band: median Rn (deep, inside the edges) = ", [round(median(R[deep8, n]), digits = 2) for n in 1:nmode],
+            ", range ", [round.(extrema(R[deep8, n]), digits = 2) for n in 1:nmode])
     line_section("mode_$(bname)ratio_line.png", "$bdesc: KEₙ / [H⟨pₙ²⟩ / (2ρ₀cₙ²)] along the mooring line (1 = one progressive wave)\n$dff_run, xi = $ix_line";
                  top = [(R[:, n], "mode $n", mode_color[n], 1.8) for n in 1:nmode],
                  top_ylabel = "Rₙ = KEₙ / [H⟨pₙ²⟩ / (2ρ₀cₙ²)]", top_ylims = (0.1, 10), top_hline = 1.0)

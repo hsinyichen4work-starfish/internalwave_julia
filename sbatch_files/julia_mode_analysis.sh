@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=runcode_%j.out
 #SBATCH --error=runcode_%j.err
 #SBATCH --mail-user=HsinYi.Chen@usm.edu
