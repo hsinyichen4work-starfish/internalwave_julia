@@ -6,13 +6,16 @@ include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
 ## DIFFERENT data compare : 
     # (1) ncom parent roms 900m grid
     # (2) cmems parent roms 2700m grid
-    # (3) ncom 900m model
+    # (3) ncom 900m model  OR  HYCOM GOFS 3.1 1/12° (see `third_model` below; NCOM 900m and 2700m are nearly identical)
     # (4) ncom 2700m model
     # (5) cmems 1/12 deg model
     # (6) french mooring data (only on "french" location)
 
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # HPC output dir — contains avg/dia/his/rst files mixed together
-figure_path = "/home/hsinyi/figure/20261027_meanflow_comp"
+# 3rd model in the comparison: "hycom" (GOFS 3.1 expt_93.0, replaces NCOM 900m) or "ncom900" (the original setup)
+third_model = "hycom"
+figure_path = third_model == "hycom" ? "/home/hsinyi/figure/20261027_meanflow_comp/comp_for_hycom" :
+                                       "/home/hsinyi/figure/20261027_meanflow_comp"
 
 # one entry per data source; `path` is a template where <moor> is replaced by the
 # mooring name (french, M1..M4, CPIES1..9), see src_file below
@@ -33,6 +36,8 @@ roms_cmems_path = Dict("3mon" => "/home/hsinyi/roms_data/mooring_ext_model/cmems
 sources = [
     Source("roms_ncom",  "ROMS 900m (NCOM parent)",  "/home/hsinyi/roms_data/mooring_ext_model/full_3mon/mooring_merged/<moor>.nc",
            "/home/hsinyi/roms_data/grid/roms_grd_900m.nc", "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"),
+    third_model == "hycom" ?
+    Source("hycom",      "HYCOM GOFS 3.1 1/12°",     "/home/hsinyi/roms_data/HYCOM_mooring/HYCOM_<moor>.nc") :
     Source("ncom900",    "NCOM 900m",                "/home/hsinyi/roms_data/NCOM_mooring/NCOM_<moor>.nc"),
     Source("ncom2700",   "NCOM 2700m",               "/home/hsinyi/roms_data/NCOM_mooring_2700/NCOM_<moor>.nc"),
     Source("roms_cmems", "ROMS 2700m (CMEMS parent)", roms_cmems_path[roms_cmems_run],
@@ -155,13 +160,20 @@ function load_moor(s::Source, moor, zg)
         return MoorData(zg, time[it], to_zgrid(z, ue, zg), to_zgrid(z, vn, zg),
                         time[it], to_zgrid(z, temp[:, it], zg), to_zgrid(z, salt[:, it], zg))
 
-    elseif startswith(s.key, "ncom") || s.key == "cmems"
+    elseif startswith(s.key, "ncom") || s.key in ("cmems", "hycom")
         # fixed z levels (positive up, deepest first); the surface moving by ssh is ignored
         time, z, temp, salt, u, v = NCDataset(src_file(s, moor)) do ds
             nomissing(ds["time"][:]), Float64.(ds["z"][:]),
             rd(ds, "temp"), rd(ds, "salt"), rd(ds, "u"), rd(ds, "v")
         end
         it = intime(time)
+        if s.key == "hycom"
+            # HYCOM water_temp is IN-SITU temperature: convert to potential temperature like the other sources
+            lon0, lat0 = mor_loc[moor]
+            p  = gsw_p_from_z.(z, lat0)                          # (nz,) dbar
+            SA = gsw_sa_from_sp.(salt, p, lon0, lat0)
+            temp = gsw_pt0_from_t.(SA, temp, p)                  # NaN stays NaN
+        end
         f(a) = to_zgrid(z, a[:, it], zg)
         return MoorData(zg, time[it], f(u), f(v), time[it], f(temp), f(salt))
 
@@ -323,6 +335,7 @@ depth_titles = ["$(round(Int, -d)) m" for d in line_depths]
 src_style = Dict(
     "roms_ncom"  => (color = "#2a78d6", short = "ROMS 900m"),
     "ncom900"    => (color = "#eb6834", short = "NCOM 900m"),
+    "hycom"      => (color = "#eb6834", short = "HYCOM"),       # takes NCOM 900m's place (third_model)
     "ncom2700"   => (color = "#c9a400", short = "NCOM 2700m"),
     "roms_cmems" => (color = "#8e44ad", short = "ROMS 2700m"),
     "cmems"      => (color = "#2e9d5b", short = "CMEMS"),

@@ -1,21 +1,23 @@
 # extract_mooring_HYCOM.jl
 #
-# Extract (interpolate) GOFS 3.5 HYCOM 1/25° output at the mooring locations.
+# Extract (interpolate) GOFS 3.1 HYCOM (GLBy0.08/expt_93.0, 1/12.5°) output at the mooring locations.
 #
-# The HYCOM files come as snapshots with irregular spacing in time
-# (gofs35_hycom_glbz04_<yyyymmddhh>_t<tau>_{ssh,ts3z,uv3z}.nc, one record each),
-# so instead of a date range the script uses EVERY snapshot found in datadir that
-# has all three files (ssh, ts3z, uv3z). When more files are downloaded,
-# just run it again: the mooring files are rewritten with all times, sorted.
+# The HYCOM files are the ones from input_file_make/hycom_data_download.jl:
+# one file per variable per 3-hourly snapshot,
+#   <datadir>/<var>/hycom_gofs31_<var>_<yyyymmddTHH>.nc   (var = surf_el, water_temp,
+#                                                          salinity, water_u, water_v)
+# The script uses EVERY snapshot found in datadir that has all five variables
+# (a snapshot missing one is skipped with a warning). When more files are
+# downloaded, just run it again: the mooring files are rewritten with all times, sorted.
 #
 # Besides the moorings, the transect along the mooring line (straight line
 # M1 -> CPIES7, through M2, CPIES2, CPIES3, M3, CPIES4..6) is extracted every
 # dx_km, on the same points as in the NCOM / GLOBAL scripts.
 #
-# HYCOM is a regular lon/lat grid with fixed z-levels, so (as in
+# HYCOM is a regular lon/lat grid (0.08° lon x 0.04° lat) with fixed z-levels, so (as in
 # extract_mooring_GLOBAL.jl) the horizontal interpolation is 4 bilinear weights
 # on the 4 surrounding columns. Only one small lon/lat box around all the
-# moorings and the transect is read from the ~12 GB 3D files. A corner that is
+# moorings and the transect is read from the files. A corner that is
 # land / below the seafloor is dropped and the weights of the wet corners are
 # rescaled; a level is NaN only if all 4 are dry.
 #
@@ -36,7 +38,7 @@ include("/home/hsinyi/Documents/Julia/function/mooring_transect.jl")
 # ---------------------------------------------------------------------------
 # User input
 # ---------------------------------------------------------------------------
-datadir      = "/home/mbui/ModelOutput/NCOM/HYCOM_data/"
+datadir      = "/home/hsinyi/roms_data/HYCOM_downlaod/"     # <var>/hycom_gofs31_<var>_<yyyymmddTHH>.nc
 outdir       = "/home/hsinyi/roms_data/HYCOM_mooring/"     # one file per mooring: HYCOM_<name>.nc
 mooring_file = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"
 
@@ -62,16 +64,16 @@ println("Moorings in this run : ", join(moor_name[moor_sel], ", "),
         do_transect ? "  + transect $(tr.name) ($(length(tr.lon)) points)" : "")
 
 # ---------------------------------------------------------------------------
-# Snapshots available: group the files by "<yyyymmddhh>_t<tau>" and keep the
-# ones that have all three kinds
+# Snapshots available: group the files by "<yyyymmddTHH>" and keep the
+# ones that have all five variables
 # ---------------------------------------------------------------------------
-kinds = ("ssh", "ts3z", "uv3z")
-file_re = r"^gofs35_hycom_glbz04_(\d{10}_t\d{4})_(ssh|ts3z|uv3z)\.nc$"
+kinds = ("surf_el", "water_temp", "salinity", "water_u", "water_v")
+file_re = r"^hycom_gofs31_(surf_el|water_temp|salinity|water_u|water_v)_(\d{8}T\d{2})\.nc$"
 snap = Dict{String,Dict{String,String}}()
-for f in readdir(datadir)
+for k in kinds, f in readdir(joinpath(datadir, k))
     m = match(file_re, f)
-    m === nothing && continue
-    get!(snap, m[1], Dict{String,String}())[m[2]] = joinpath(datadir, f)
+    (m === nothing || m[1] != k) && continue
+    get!(snap, m[2], Dict{String,String}())[k] = joinpath(datadir, k, f)
 end
 for (tag, fs) in snap
     missing_kinds = [k for k in kinds if !haskey(fs, k)]
@@ -79,10 +81,11 @@ for (tag, fs) in snap
 end
 tags = sort(collect(keys(snap)))
 isempty(tags) && error("no complete HYCOM snapshots in $datadir")
-println("$(length(tags)) snapshots: ", join(tags, ", "))
+println("$(length(tags)) snapshots: $(first(tags)) .. $(last(tags))")
 
-# grid (same for every file): lon 0..360 (periodic), lat ascending, 40 z-levels (positive down)
-lon, lat, dep = NCDataset(snap[tags[1]]["ts3z"]) do ds
+# grid (same for every file): regional box, lon in 0..360 (NOT periodic), lat ascending,
+# 40 z-levels (positive down)
+lon, lat, dep = NCDataset(snap[tags[1]]["water_temp"]) do ds
     Float64.(ds["lon"][:]), Float64.(ds["lat"][:]), Float64.(ds["depth"][:])
 end
 Nz = length(dep)
@@ -94,14 +97,15 @@ Nz = length(dep)
     bilinear_corners(lon, lat, lon0, lat0) -> (corners, w)
 
 The 4 (i, j) grid points around (lon0, lat0) and their bilinear weights.
-`lon` is the periodic 0..360 HYCOM axis (lon0 may be -180..180), `lat` ascending.
+`lon` is the regional 0..360 HYCOM axis (lon0 may be -180..180), `lat` ascending.
 """
 function bilinear_corners(lon, lat, lon0, lat0)
-    lat[1] <= lat0 <= lat[end] || error("lat $lat0 is outside the grid: $(lat[1])..$(lat[end])")
-    x = mod(lon0 - lon[1], 360) + lon[1]
-    i  = searchsortedlast(lon, x)
-    i2 = i == length(lon) ? 1 : i + 1                     # wrap across 360 -> 0
-    dlon = mod(lon[i2] - lon[i], 360)
+    lat[1] <= lat0 <= lat[end] || error("lat $lat0 is outside the downloaded box: $(lat[1])..$(lat[end])")
+    x = mod(lon0, 360)
+    lon[1] <= x <= lon[end] || error("lon $lon0 ($x) is outside the downloaded box: $(lon[1])..$(lon[end])")
+    i  = clamp(searchsortedlast(lon, x), 1, length(lon) - 1)
+    i2 = i + 1
+    dlon = lon[i2] - lon[i]
     j = clamp(searchsortedlast(lat, lat0), 1, length(lat) - 1)
     a = (x - lon[i]) / dlon
     b = (lat0 - lat[j]) / (lat[j+1] - lat[j])
@@ -142,7 +146,6 @@ tr_cw = do_transect ? [bilinear_corners(lon, lat, x, y) for (x, y) in zip(tr.lon
 all_corners = vcat([m.corners for m in moor]..., first.(tr_cw)...)
 i0, i1 = extrema(first.(all_corners))
 j0, j1 = extrema(last.(all_corners))
-i1 - i0 < length(lon) ÷ 2 || error("points on both sides of lon 0/360; the box read is not set up for that")
 println("reading box i=$i0:$i1, j=$j0:$j1 ($(i1-i0+1) x $(j1-j0+1) columns)")
 
 # read the box of a 3D variable -> (i, j, depth), or of a 2D one -> (i, j, 1); missing -> NaN
@@ -155,24 +158,25 @@ interp_point(B, corners, w) = wet_average(stack([B[i - i0 + 1, j - j0 + 1, :] fo
 # ---------------------------------------------------------------------------
 # Time loop: every snapshot (and every record in it, in case a file has more than one)
 # ---------------------------------------------------------------------------
-varlist = [("temp", "ts3z", "water_temp"), ("salt", "ts3z", "salinity"),
-           ("u", "uv3z", "water_u"), ("v", "uv3z", "water_v"), ("ssh", "ssh", "surf_el")]
+varlist = [("temp", "water_temp"), ("salt", "salinity"),
+           ("u", "water_u"), ("v", "water_v"), ("ssh", "surf_el")]
 time_out = DateTime[]
-out = Dict(m.name => Dict(v => Vector{Float64}[] for (v, _, _) in varlist) for m in moor)
-tr_out = Dict(v => Matrix{Float64}[] for (v, _, _) in varlist)    # (depth, x) per record
+out = Dict(m.name => Dict(v => Vector{Float64}[] for (v, _) in varlist) for m in moor)
+tr_out = Dict(v => Matrix{Float64}[] for (v, _) in varlist)    # (depth, x) per record
 
-for tag in tags
+for (n, tag) in enumerate(tags)
     fs = snap[tag]
-    ds_ts, ds_uv, ds_ssh = NCDataset(fs["ts3z"]), NCDataset(fs["uv3z"]), NCDataset(fs["ssh"])
+    dss = Dict(k => NCDataset(fs[k]) for k in kinds)
     try
-        @assert Float64.(ds_uv["lon"][:]) == lon && Float64.(ds_uv["lat"][:]) == lat "$tag: uv3z on a different grid"
-        t_all = ds_ts["time"][:]
-        @assert ds_uv["time"][:] == t_all && ds_ssh["time"][:] == t_all "$tag: ts3z/uv3z/ssh have different times"
+        t_all = dss["water_temp"]["time"][:]
+        for k in kinds
+            @assert Float64.(dss[k]["lon"][:]) == lon && Float64.(dss[k]["lat"][:]) == lat "$tag: $k on a different grid"
+            @assert dss[k]["time"][:] == t_all "$tag: $k has a different time"
+        end
         for t in eachindex(t_all)
             push!(time_out, t_all[t])
-            dsk = Dict("ts3z" => ds_ts, "uv3z" => ds_uv, "ssh" => ds_ssh)
-            for (v, kind, ncvar) in varlist
-                B = read_box(dsk[kind][ncvar], t)
+            for (v, ncvar) in varlist
+                B = read_box(dss[ncvar][ncvar], t)
                 for m in moor
                     push!(out[m.name][v], interp_point(B, m.corners, m.w))
                 end
@@ -180,13 +184,13 @@ for tag in tags
             end
         end
     finally
-        close(ds_ts); close(ds_uv); close(ds_ssh)
+        foreach(close, values(dss))
     end
-    println("done $tag  ($(length(time_out)) records)")
+    (n % 80 == 0 || n == length(tags)) && println("done $tag  ($n/$(length(tags)) snapshots)")
 end
 
 # snapshots are sorted by file name; sort by valid time too, and drop duplicates
-# (e.g. the same valid time from two different analyses: the first one is kept)
+# (should not happen with this data; kept as a safety check)
 it = unique(i -> time_out[i], sortperm(time_out))
 length(it) < length(time_out) && @warn "$(length(time_out) - length(it)) duplicate times dropped"
 time_out = time_out[it]
@@ -200,10 +204,10 @@ for m in moor
     to_zt(x) = reverse(stack(x)[:, it], dims = 1)        # (depth, time) surface-first -> bottom-first
     fname = joinpath(outdir, "HYCOM_$(m.name).nc")
     NCDataset(fname, "c") do ds
-        ds.attrib["title"]   = "GOFS 3.5 HYCOM glbz04 interpolated to mooring $(m.name)"
+        ds.attrib["title"]   = "GOFS 3.1 HYCOM GLBy0.08 expt_93.0 interpolated to mooring $(m.name)"
         ds.attrib["station"] = m.name
         ds.attrib["source"]  = "extract_mooring_HYCOM.jl, data $datadir"
-        ds.attrib["note"]    = "irregular time sampling: one record per available HYCOM snapshot"
+        ds.attrib["note"]    = "3-hourly HYCOM snapshots; a time missing from datadir is skipped (no gap filling)"
         defDim(ds, "z", Nz); defDim(ds, "time", length(time_out))
 
         defVar(ds, "lon", m.lon, (), attrib = ["units" => "degrees_east"])
@@ -231,7 +235,7 @@ if do_transect
     save_transect(joinpath(outdir, "HYCOM_$(tr.name).nc"), tr, reverse(-dep), time_out,
                   [v => (to_zxt(tr_out[v]), longname[v]...) for v in ("temp", "salt", "u", "v")];
                   ssh    = stack(tr_out["ssh"])[1, :, it],
-                  title  = "GOFS 3.5 HYCOM glbz04 interpolated to the $(tr.from) - $(tr.to) transect",
+                  title  = "GOFS 3.1 HYCOM GLBy0.08 expt_93.0 interpolated to the $(tr.from) - $(tr.to) transect",
                   source = "extract_mooring_HYCOM.jl, data $datadir",
-                  note   = "irregular time sampling: one record per available HYCOM snapshot")
+                  note   = "3-hourly HYCOM snapshots; a time missing from datadir is skipped (no gap filling)")
 end
