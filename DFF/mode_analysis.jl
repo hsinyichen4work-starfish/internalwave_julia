@@ -17,9 +17,9 @@ run_mooring = Dict("amazon_2700m_cmems_0801" => "roms_cmems_grd_2700m_mor_edata.
 mooring_file = "/expanse/lustre/projects/uso102/hchen54/input/grid/$(get(run_mooring, dff_run, "roms_grd_900m_mor_edata.nc"))"
 puv_fname = joinpath(bcef_dir, NMODE == 1 ? "bcef_mode1_puv.nc" : "bcef_modes$(NMODE)_puv.nc")   # steps 4 and 5
 h_mask = 200.0   # [m] shelf not drawn in steps 4 and 5
-# steps to run after (1) and (2), which always run: MODE_STEPS=5 or MODE_STEPS=4,5 (default all: 3,4,5,6,7,8).
+# steps to run after (1) and (2), which always run: MODE_STEPS=5 or MODE_STEPS=4,5 (default all: 3,4,5,6,7,8,9,10).
 # Step 3 reads ~200 MB of the structure file and step 5 the whole pn record once (then a small cache file).
-mode_steps = parse.(Int, split(get(ENV, "MODE_STEPS", "3,4,5,6,7,8"), ","))
+mode_steps = parse.(Int, split(get(ENV, "MODE_STEPS", "3,4,5,6,7,8,9,10"), ","))
 println("steps: 1, 2, ", join(mode_steps, ", "))
 
 # ============================================================================
@@ -162,37 +162,46 @@ fig_w, paper_w_cm = 1300, 18.0
 pt = fig_w / (paper_w_cm / 2.54 * 72)   # [units per pt], ~2.55
 mode_color = [:black, :crimson, :royalblue, :darkgreen, :orange][1:nmode]
 
-# panels along the line: top = curves on a log axis, middle = shares [%] (left out when share = nothing), bottom =
-# bathymetry with the moorings and analysis points; shelf (h < h_mask) not drawn, edge bands shaded.
-# top / share: vectors of (y along the line, label, colour, linewidth); top_hline: a reference value drawn on the top axis
-function line_section(fname, title; top, top_ylabel, share = nothing, share_ylabel = "", top_ymin = nothing,
-                      top_ylims = nothing, top_hline = nothing)
-    fig = Figure(size = (fig_w, share === nothing ? 950 : 1150), fontsize = 10pt)
+# panels along the line, above the bathymetry (with the moorings and analysis points); shelf (h < h_mask) not drawn,
+# edge bands shaded. Each panel: (curves = [(y along the line, label, colour, linewidth[, linestyle])], ylabel,
+# log = false, ylims = nothing, hline = nothing, legend = nothing | :lb, :rt, ...). Text is sized for print (pt).
+function line_panels(fname, title, panels)
+    np = length(panels)
+    fig = Figure(size = (fig_w, 550 + 300 * np), fontsize = 10pt)
     xmax = line_km[end]
-    ax1 = Axis(fig[1, 1]; ylabel = top_ylabel, yscale = log10, title = title)
-    ax2 = share === nothing ? nothing : Axis(fig[2, 1]; ylabel = share_ylabel)
-    ax3 = Axis(fig[share === nothing ? 2 : 3, 1]; ylabel = "depth [m]", xlabel = "distance along line [km] (grid south → north)")
-    axs = filter(!isnothing, [ax1, ax2, ax3])
     deepline = h[ix_line, :] .>= h_mask   # shelf: modes not meaningful
     nanshelf(a) = ifelse.(deepline, a, NaN)
-    top_hline === nothing || hlines!(ax1, [top_hline]; color = :gray30, linestyle = :dot, linewidth = 1.5)
-    for (y, lab, col, lw) in top
-        lines!(ax1, line_km, nanshelf(y); color = col, linewidth = lw, label = lab)
-    end
-    if share !== nothing
-        for (y, lab, col, lw) in share
-            lines!(ax2, line_km, nanshelf(y); color = col, linewidth = lw, label = lab)
+    axs = Axis[]
+    for (k, P) in enumerate(panels)
+        ax = Axis(fig[k, 1]; ylabel = P.ylabel, yscale = get(P, :log, false) ? log10 : identity, title = k == 1 ? title : "")
+        push!(axs, ax)
+        hl = get(P, :hline, nothing)
+        hl === nothing || hlines!(ax, [hl]; color = :gray30, linestyle = :dot, linewidth = 1.5)
+        for cv in P.curves
+            lines!(ax, line_km, nanshelf(cv[1]); label = cv[2], color = cv[3], linewidth = cv[4],
+                   linestyle = length(cv) >= 5 ? cv[5] : :solid)
         end
+        yl = get(P, :ylims, nothing)
+        if yl !== nothing
+            ylims!(ax, yl...)
+        elseif get(P, :log, false)
+            vals = filter(v -> isfinite(v) && v > 0, reduce(vcat, [nanshelf(cv[1]) for cv in P.curves]))
+            ylims!(ax, something(get(P, :ymin, nothing), 10^floor(log10(minimum(vals)))), 10^ceil(log10(maximum(vals))))
+        end
+        lg = get(P, :legend, nothing)
+        lg === nothing || axislegend(ax; position = lg, nbanks = 2, framevisible = true, backgroundcolor = (:white, 0.9))
     end
-    band!(ax3, line_km, fill(-5000.0, ny), -h[ix_line, :]; color = :gray80)
-    lines!(ax3, line_km, -h[ix_line, :]; color = :black, linewidth = 1.2)
+    axb = Axis(fig[np + 1, 1]; ylabel = "depth [m]", xlabel = "distance along line [km] (grid south → north)")
+    push!(axs, axb)
+    band!(axb, line_km, fill(-5000.0, ny), -h[ix_line, :]; color = :gray80)
+    lines!(axb, line_km, -h[ix_line, :]; color = :black, linewidth = 1.2)
     # moorings on the line (thin) and the analysis points on the line (coloured, dashed)
     for (nm, (i, j)) in zip(moor_name, moor_ij)
         abs(i - ix_line) <= 1 || continue
         for ax in axs
             vlines!(ax, [line_km[j]]; color = :gray60, linewidth = 0.6)
         end
-        text!(ax3, line_km[j], -1200; text = nm, rotation = π / 2, align = (:right, :center), fontsize = 8pt)   # in the water, from -1200 m down
+        text!(axb, line_km[j], -1200; text = nm, rotation = π / 2, align = (:right, :center), fontsize = 8pt)   # in the water, from -1200 m down
     end
     for (k, p) in enumerate(points)
         abs(p.i - ix_line) <= 1 && p.name in ("200 km node", "M1", "CPIES3") || continue
@@ -200,38 +209,41 @@ function line_section(fname, title; top, top_ylabel, share = nothing, share_ylab
             vlines!(ax, [line_km[p.j]]; color = point_color[k], linestyle = :dash, linewidth = 1.5)
         end
         left = p.name == "200 km node"   # left of its line, clear of the M1 label
-        text!(ax3, line_km[p.j], -150; text = left ? p.name * " " : " " * p.name, color = point_color[k],
+        text!(axb, line_km[p.j], -150; text = left ? p.name * " " : " " * p.name, color = point_color[k],
               align = (left ? :right : :left, :top), fontsize = 10pt)   # in the water above the slope
     end
     # the edge bands of the DFF plots (edge points at each end of the line): sponge / boundary, not to be trusted
     for ax in axs
         vspan!(ax, [0, line_km[end - edge]], [line_km[edge], line_km[end]]; color = (:gray, 0.15))
     end
-    if top_ylims === nothing
-        vals = filter(v -> isfinite(v) && v > 0, reduce(vcat, [nanshelf(y) for (y, _, _, _) in top]))
-        ylims!(ax1, something(top_ymin, 10^floor(log10(minimum(vals)))), 10^ceil(log10(maximum(vals))))
-    else
-        ylims!(ax1, top_ylims...)
-    end
-    share === nothing || ylims!(ax2, 0, 100)
-    ylims!(ax3, -5000, 100)
+    ylims!(axb, -5000, 100)
     for ax in axs
         xlims!(ax, 0, xmax)
         ax.xticks = 0:50:xmax   # a tick every 50 km
     end
     linkxaxes!(axs...)
     foreach(ax -> hidexdecorations!(ax; grid = false), axs[1:end-1])
-    axislegend(ax1; position = :lb, nbanks = 2, framevisible = true, backgroundcolor = (:white, 0.9))   # lower left: no data there
-    share !== nothing && length(share) > 1 && any(!isempty(l) for (_, l, _, _) in share) &&
-        axislegend(ax2; position = :rt, nbanks = 2, framevisible = true, backgroundcolor = (:white, 0.9))
-    nrow = length(axs)
-    Label(fig[nrow + 1, 1], "shelf (h < $(Int(h_mask)) m) not drawn; grey shading: $edge-point edge bands;\ngrey vertical lines: moorings on the line; dashed: analysis points"; fontsize = 8pt, tellwidth = false)
-    rowsize!(fig.layout, 1, Relative(share === nothing ? 0.6 : 0.45)); rowsize!(fig.layout, nrow, Relative(share === nothing ? 0.27 : 0.2))
-    for r in 1:nrow-1
+    Label(fig[np + 2, 1], "shelf (h < $(Int(h_mask)) m) not drawn; grey shading: $edge-point edge bands;\ngrey vertical lines: moorings on the line; dashed: analysis points"; fontsize = 8pt, tellwidth = false)
+    # data panels share ~75 % of the height, the bathymetry ~20 % (first panel larger when there are two)
+    hb = np == 1 ? 0.27 : 0.2
+    for k in 1:np
+        rowsize!(fig.layout, k, Relative(np == 2 ? (k == 1 ? 0.45 : 0.3) : (1 - hb - 0.05) / np))
+    end
+    rowsize!(fig.layout, np + 1, Relative(hb))
+    for r in 1:np
         rowgap!(fig.layout, r, 2pt * 10)   # room between the panels' tick labels
     end
     save(joinpath(figure_path, fname), fig; px_per_unit = 2)
     println("saved $fname")
+end
+
+# steps 5-8: a log panel (top), optionally a share panel [%], and the bathymetry
+function line_section(fname, title; top, top_ylabel, share = nothing, share_ylabel = "", top_ymin = nothing,
+                      top_ylims = nothing, top_hline = nothing)
+    panels = Any[(curves = top, ylabel = top_ylabel, log = true, ylims = top_ylims, ymin = top_ymin, hline = top_hline, legend = :lb)]
+    share === nothing || push!(panels, (curves = share, ylabel = share_ylabel, ylims = (0, 100),
+                                        legend = any(!isempty(cv[2]) for cv in share) ? :rt : nothing))
+    line_panels(fname, title, panels)
 end
 
 # ρ0 of the run (the his files' rho0, as bcef_modes_puv.jl used for p')
@@ -295,13 +307,19 @@ end
 # time mean of x^2 in a frequency band, per point and mode: rfft in time, zero the other frequencies, back, square,
 # average. x (eta, time, mode); keepf(f in cph) -> true in the band. Returns (eta, mode) and the number of frequencies.
 function band_msq(x, keepf, dt)
+    xb, nkeep = band_pass(x, keepf, dt)
+    dropdims(mean(xb .^ 2, dims = 2), dims = 2), nkeep
+end
+
+# x (eta, time, mode) band-passed in time (sharp, FFT bins): rfft, zero the frequencies outside the band, back
+function band_pass(x, keepf, dt)
     nt_x = size(x, 2)
     keep = keepf.((0:div(nt_x, 2)) ./ (nt_x * dt))
-    out = zeros(size(x, 1), size(x, 3))
+    out = similar(x)
     for n in axes(x, 3)
         X = rfft(x[:, :, n], 2)
         X[:, .!keep] .= 0
-        out[:, n] .= vec(mean(irfft(X, nt_x, 2) .^ 2, dims = 2))
+        out[:, :, n] .= irfft(X, nt_x, 2)
     end
     out, count(keep)
 end
@@ -588,3 +606,109 @@ for (bname, bkeep, bdesc) in var_bands
                  top_ylabel = "Rₙ = KEₙ / [H⟨pₙ²⟩ / (2ρ₀cₙ²)]", top_ylims = (0.1, 10), top_hline = 1.0)
 end
 end   # (8)
+
+# ============================================================================
+# (9) modal energy flux along the mooring line, per frequency band
+# ============================================================================
+if 9 in mode_steps
+# Fy,n = H <pn vn> (along the line: the line is a grid column, so grid eta is along it, Fy > 0 = grid north / offshore),
+# Fx,n = H <pn un> (across it, grid xi) and |Fn| = √(Fx,n² + Fy,n²) of the time means, each with pn, un, vn band-passed
+# first (a flux is a product, so the band-pass is on the fields, not on pn vn). Σn is the flux of modes 1..nmode:
+# the modes are orthogonal, so ∫ p'u' dz = Σn H pn un, no cross-mode terms. Same as the "all" flux of DFF_on_bcef.jl.
+p9, dt9 = line_series("p", ["p"])
+uv9, _ = line_series("uv", ["u", "v"])
+for (bname, bkeep, bdesc) in var_bands
+    pb, _ = band_pass(p9["p"], bkeep, dt9)
+    ub, _ = band_pass(uv9["u"], bkeep, dt9)
+    vb, nkeep = band_pass(uv9["v"], bkeep, dt9)
+    Fy = Hline .* dropdims(mean(pb .* vb, dims = 2), dims = 2) ./ 1e3   # (eta, mode) [kW m-1]
+    Fx = Hline .* dropdims(mean(pb .* ub, dims = 2), dims = 2) ./ 1e3
+    pb = ub = vb = nothing
+    Fy_s, Fx_s = vec(sum(Fy, dims = 2)), vec(sum(Fx, dims = 2))
+    Fm, Fm_s = hypot.(Fx, Fy), hypot.(Fx_s, Fy_s)
+    deep9 = (h[ix_line, :] .>= h_mask) .& (edge .< (1:ny) .<= ny - edge)
+    println("$bname band flux ($nkeep frequencies), mean over the deep line [kW/m]: Fy ", [round(mean(Fy[deep9, n]), sigdigits = 3) for n in 1:nmode],
+            " (sum $(round(mean(Fy_s[deep9]), sigdigits = 3))), Fx ", [round(mean(Fx[deep9, n]), sigdigits = 3) for n in 1:nmode],
+            " (sum $(round(mean(Fx_s[deep9]), sigdigits = 3)))")
+    curves(A, As) = [(As, "modes 1-$nmode", :gray50, 3); [(A[:, n], "mode $n", mode_color[n], 1.8) for n in 1:nmode]]
+    line_panels("mode_$(bname)flux_line.png", "$bdesc modal energy flux along the mooring line\n$dff_run, xi = $ix_line",
+                [(curves = curves(Fy, Fy_s), ylabel = "Fy,n = H⟨pₙvₙ⟩ (along)\n[kW m⁻¹]", hline = 0.0, legend = :rt),
+                 (curves = curves(Fx, Fx_s), ylabel = "Fx,n = H⟨pₙuₙ⟩ (across)\n[kW m⁻¹]", hline = 0.0),
+                 (curves = curves(Fm, Fm_s), ylabel = "|Fₙ| [kW m⁻¹]")])
+end
+end   # (9)
+
+# ============================================================================
+# (10) divergence of the modal energy flux along the mooring line, per frequency band
+# ============================================================================
+if 10 in mode_steps
+# ∂Fx/∂x and ∂Fy/∂y need the flux on the neighbouring columns too, so they come from the time-mean flux maps of the
+# 3-mode DFF (DFF_on_bcef.jl, bcef_dff_flux_modes<N>.nc, sector "all" = the full flux H <pn un>, same FFT band-pass:
+# M2 -> "M2", HH -> "hp9"), full record. On the curvilinear grid (pm = 1/Δξ, pn = 1/Δη):
+#   ∂Fx/∂x = pm pn ∂ξ(Fx / pn),  ∂Fy/∂y = pm pn ∂η(Fy / pm)   (their sum is ∇·F),
+# centred differences at the line; then a running mean over div_smooth_km, as the derivatives of a 0.9 km grid are noisy.
+# ∇·F > 0: the flux grows along the path (a source, e.g. generation); < 0: it is lost (dissipation, conversion).
+div_smooth_km = 10.0
+dff_band = Dict("M2" => "M2", "HH" => "hp9")
+flux_map_fname = joinpath(bcef_dir, "bcef_dff_flux_modes$(NMODE).nc")
+pm_g, pn_g = NCDataset(run_grid_fname) do g
+    Float64.(g["pm"][:, :]), Float64.(g["pn"][:, :])
+end
+# running mean over ~div_smooth_km along the line, ignoring NaN
+function smooth_line(y, km)
+    w = max(1, round(Int, km / median(diff(line_km)) / 2))
+    [(v = filter(isfinite, y[max(1, j - w):min(end, j + w)]); isfinite(y[j]) && !isempty(v) ? mean(v) : NaN) for j in eachindex(y)]
+end
+# pn, vn along the line (the caches of steps 5-9), only for the check against step 9's Fy
+p10, dt10 = line_series("p", ["p"])
+uv10, _ = line_series("uv", ["u", "v"])
+for (bname, bkeep, bdesc) in var_bands
+    haskey(dff_band, bname) || continue
+    b = dff_band[bname]
+    dFx, dFy, Fy_line = Dict{String, Vector{Float64}}(), Dict{String, Vector{Float64}}(), Dict{String, Vector{Float64}}()
+    NCDataset(flux_map_fname) do d
+        nxf, nyf = d.dim["xi_rho"], d.dim["eta_rho"]
+        i = ix_line
+        pm, pn = pm_g[1:nxf, 1:nyf], pn_g[1:nxf, 1:nyf]
+        for m in [["mode$n" for n in 1:nmode]; "modesum"]
+            Fx = Float64.(nomissing(d["Fx_$(b)_all_$m"][i-1:i+1, :, 1], NaN))   # columns i-1, i, i+1; period 1 = full
+            Fy = Float64.(nomissing(d["Fy_$(b)_all_$m"][i, :, 1], NaN))
+            gx = fill(NaN, ny); gy = fill(NaN, ny); fy = fill(NaN, ny)
+            for j in 2:nyf-1
+                # ξ: (Fx/pn) at i+1 minus i-1 over 2 cells; η: (Fy/pm) at j+1 minus j-1
+                gx[j] = pm[i, j] * pn[i, j] * (Fx[3, j] / pn[i+1, j] - Fx[1, j] / pn[i-1, j]) / 2
+                gy[j] = pm[i, j] * pn[i, j] * (Fy[j+1] / pm[i, j+1] - Fy[j-1] / pm[i, j-1]) / 2
+            end
+            fy[1:nyf] .= Fy
+            dFx[m], dFy[m], Fy_line[m] = smooth_line(gx, div_smooth_km) .* 1e3, smooth_line(gy, div_smooth_km) .* 1e3, fy   # [mW m-2]
+        end
+    end
+    deep10 = (h[ix_line, :] .>= h_mask) .& (edge .< (1:ny) .<= ny - edge)
+    # check: the DFF-map Fy on the line vs the Fy of step 9 (same flux, two calculations)
+    pbb, _ = band_pass(p10["p"], bkeep, dt10)
+    vbb, _ = band_pass(uv10["v"], bkeep, dt10)
+    fy9 = vec(sum(Hline .* dropdims(mean(pbb .* vbb, dims = 2), dims = 2), dims = 2))   # [W m-1]
+    pbb = vbb = nothing
+    ok = deep10 .& isfinite.(Fy_line["modesum"])
+    println("$bname: Fy (modes 1-$nmode) on the line, DFF map vs step 9: mean $(round(mean(Fy_line["modesum"][ok]) / 1e3, sigdigits = 3)) vs ",
+            "$(round(mean(fy9[ok]) / 1e3, sigdigits = 3)) kW/m, max |difference| $(round(maximum(abs.(Fy_line["modesum"][ok] .- fy9[ok])) / 1e3, sigdigits = 2)) kW/m")
+    println("$bname: mean over the deep line [mW/m²]: ∂Fy/∂y ", [round(mean(filter(isfinite, dFy["mode$n"][deep10])), sigdigits = 2) for n in 1:nmode],
+            ", ∂Fx/∂x ", [round(mean(filter(isfinite, dFx["mode$n"][deep10])), sigdigits = 2) for n in 1:nmode])
+    curves(D) = [(D["modesum"], "modes 1-$nmode", :gray50, 3); [(D["mode$n"], "mode $n", mode_color[n], 1.8) for n in 1:nmode]]
+    # one y range for both panels, from the deep line (h >= 1000 m): the generation peak on the upper slope is far larger
+    # and goes off scale (its value is noted on the panel)
+    sel = (h[ix_line, :] .>= 1000) .& (edge .< (1:ny) .<= ny - edge)
+    lim = 1.1 * maximum(maximum(abs, filter(isfinite, D[m][sel])) for D in (dFx, dFy) for m in keys(D))
+    lim = 50 * ceil(lim / 50)
+    peak(D) = (v = filter(isfinite, D["modesum"]); a = v[argmax(abs.(v))]; abs(a) > lim ? a : nothing)
+    pk = Dict("y" => peak(dFy), "x" => peak(dFx))
+    for (k, v) in pk
+        v === nothing || println("  ∂F$k/∂$k (modes 1-$nmode) peaks at $(round(Int, v)) mW/m², off the ±$(Int(lim)) scale")
+    end
+    note(k) = pk[k] === nothing ? "" : "\n(peak $(round(Int, pk[k])) off scale)"
+    line_panels("mode_$(bname)fluxdiv_line.png",
+                "$bdesc energy-flux divergence along the mooring line ($(Int(div_smooth_km)) km running mean)\n$dff_run, xi = $ix_line",
+                [(curves = curves(dFy), ylabel = "∂Fy/∂y (along)\n[mW m⁻²]$(note("y"))", hline = 0.0, legend = :rt, ylims = (-lim, lim)),
+                 (curves = curves(dFx), ylabel = "∂Fx/∂x (across)\n[mW m⁻²]$(note("x"))", hline = 0.0, ylims = (-lim, lim))])
+end
+end   # (10)
