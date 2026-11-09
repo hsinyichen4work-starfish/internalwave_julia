@@ -5,10 +5,10 @@ include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
 ##
 ## DIFFERENT data compare : 
     # (1) ncom parent roms 900m grid
-    # (2) cmems parent roms 2700m grid
+    # (2) glorys parent roms 2700m grid
     # (3) ncom 900m model  OR  HYCOM GOFS 3.1 1/12° (see `third_model` below; NCOM 900m and 2700m are nearly identical)
     # (4) ncom 2700m model
-    # (5) cmems 1/12 deg model
+    # (5) glorys 1/12 deg model
     # (6) french mooring data (only on "french" location)
 
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # HPC output dir — contains avg/dia/his/rst files mixed together
@@ -28,21 +28,21 @@ struct Source
 end
 Source(key, label, path) = Source(key, label, path, "", "")
 
-# ROMS 2700m (CMEMS parent) run: "3mon" (2022-08-24 to 11-29) or "1mon" (2022-08-24 to 09-29)
-roms_cmems_run  = "3mon"
-roms_cmems_path = Dict("3mon" => "/home/hsinyi/roms_data/mooring_ext_model/cmems3mon/<moor>.nc",
+# ROMS 2700m (GLORYS parent) run: "3mon" (2022-08-24 to 11-29) or "1mon" (2022-08-24 to 09-29)
+roms_glorys_run  = "3mon"
+roms_glorys_path = Dict("3mon" => "/home/hsinyi/roms_data/mooring_ext_model/cmems3mon/<moor>.nc",
                        "1mon" => "/home/hsinyi/roms_data/mooring_ext_model/cmems2700/mooring_merged/<moor>.nc")
 
 sources = [
     Source("roms_ncom",  "ROMS 900m (NCOM parent)",  "/home/hsinyi/roms_data/mooring_ext_model/full_3mon/mooring_merged/<moor>.nc",
            "/home/hsinyi/roms_data/grid/roms_grd_900m.nc", "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"),
+    Source("ncom2700",   "NCOM 2700m",               "/home/hsinyi/roms_data/NCOM_mooring_2700/NCOM_<moor>.nc"),
     third_model == "hycom" ?
     Source("hycom",      "HYCOM GOFS 3.1 1/12°",     "/home/hsinyi/roms_data/HYCOM_mooring/HYCOM_<moor>.nc") :
     Source("ncom900",    "NCOM 900m",                "/home/hsinyi/roms_data/NCOM_mooring/NCOM_<moor>.nc"),
-    Source("ncom2700",   "NCOM 2700m",               "/home/hsinyi/roms_data/NCOM_mooring_2700/NCOM_<moor>.nc"),
-    Source("roms_cmems", "ROMS 2700m (CMEMS parent)", roms_cmems_path[roms_cmems_run],
+    Source("roms_glorys", "ROMS 2700m (GLORYS parent)", roms_glorys_path[roms_glorys_run],
            "/home/hsinyi/roms_data/grid/roms_cmems_grd_2700m.nc", "/home/hsinyi/roms_data/grid/roms_cmems_grd_2700m_mor_edata.nc"),
-    Source("cmems",      "CMEMS 1/12°",              "/home/hsinyi/roms_data/GLOBAL_mooring/GLOBAL_<moor>.nc"),
+    Source("glorys",      "GLORYS 1/12°",              "/home/hsinyi/roms_data/GLOBAL_mooring/GLOBAL_<moor>.nc"),
     Source("french",     "French mooring",           "/home/hsinyi/data_notm/French_mooring"),   # folder: adcp_newalgo_raw_corr_angle.nc, ctd_corrected_raw.nc; only at "french"
 ]
 
@@ -96,7 +96,7 @@ end
 # Every source interpolated onto one fixed z grid at one mooring.
 #   z          : height relative to the instantaneous sea surface (m, negative down, ascending)
 #   fields     : (nz, nt), NaN outside the depth range of the data (no extrapolation)
-#   u, v       : true east/north; ROMS is rotated from its grid axes, NCOM, CMEMS and the ADCP are already east/north
+#   u, v       : true east/north; ROMS is rotated from its grid axes, NCOM, GLORYS and the ADCP are already east/north
 #   temp       : potential temperature (°C), salt: practical salinity (psu)
 # T/S and u/v keep their own time axes, because the French CTD (6 min) and ADCP (30 min) sample
 # at different times; for the models time_ts == time_uv.
@@ -160,7 +160,7 @@ function load_moor(s::Source, moor, zg)
         return MoorData(zg, time[it], to_zgrid(z, ue, zg), to_zgrid(z, vn, zg),
                         time[it], to_zgrid(z, temp[:, it], zg), to_zgrid(z, salt[:, it], zg))
 
-    elseif startswith(s.key, "ncom") || s.key in ("cmems", "hycom")
+    elseif startswith(s.key, "ncom") || s.key in ("glorys", "hycom")
         # fixed z levels (positive up, deepest first); the surface moving by ssh is ignored
         time, z, temp, salt, u, v = NCDataset(src_file(s, moor)) do ds
             nomissing(ds["time"][:]), Float64.(ds["z"][:]),
@@ -267,6 +267,19 @@ time_depth_vars = [
     "direction" => (direction,    d -> d.time_uv, (0, 360),    nothing,      :phase,   "Direction toward (° clockwise from north)"),
 ]
 
+# eddy kinetic energy (same definition as in mooring_comp.jl):
+#   EKE(z, t) = 0.5 * ((u - ubar)^2 + (v - vbar)^2)   (m²/s²)
+# ubar(z), vbar(z) = time means at each depth over the source's own valid samples (NaN ignored), so for the
+# ADCP rows with gaps the mean covers less of the period than for the models.
+# Only plotted from the low-passed data (data_lp): EKE of the 28 h low-passed flow. Kept out of time_depth_vars
+# so the line / scatter loops below do not pick it up.
+rowmean(a) = [(g = filter(!isnan, a[k, :]); isempty(g) ? NaN : mean(g)) for k in axes(a, 1)]
+eke(d) = 0.5 .* ((d.u .- rowmean(d.u)) .^ 2 .+ (d.v .- rowmean(d.v)) .^ 2)
+eke_max = 0.3      # colour limit (m²/s²); lower it if most of the panels look washed out
+extra_time_depth_vars = [
+    "EKE" => (eke, d -> d.time_uv, (0, eke_max), 0:eke_max/6:eke_max, :amp, "EKE (m²/s²)"),
+]
+
 # model field f (nz, nt) on times t, blanked wherever the mooring field fm (nz, ntm) on times tm is NaN at the
 # nearest mooring sample, or where the nearest mooring sample is more than 2 mooring steps away (a gap in the record)
 function mask_like(t, f, tm, fm)
@@ -286,7 +299,7 @@ end
 
 # masked = true: the models are shown only where (and when) the French mooring has data for that variable
 function plot_time_depth(D, var; tag, masked = false)
-    field, tfun, clim, levels, colormap, cblabel = Dict(time_depth_vars)[var]
+    field, tfun, clim, levels, colormap, cblabel = Dict(vcat(time_depth_vars, extra_time_depth_vars))[var]
     masked && !haskey(D, "french") && return nothing
     srcs = filter(s -> haskey(D, s.key), sources)
     fig = Figure(; figkw(18, 2.6 * length(srcs) + 1.5)..., figure_padding = (4, 8, 4, 4))
@@ -326,6 +339,11 @@ for (D, tag) in ((data, "raw"), (data_lp, "lp$(round(Int, Tcut))h")), (var, _) i
     plot_time_depth(D, var; tag = tag, masked = masked)
 end
 
+# EKE of the 28 h low-passed flow (low-passed data only)
+for masked in (false, true)
+    plot_time_depth(data_lp, "EKE"; tag = "lp$(round(Int, Tcut))h", masked = masked)
+end
+
 ## ===== line plots at fixed depths, and scatter plots of each model against the mooring =====
 line_depths = [-200.0, -250.0, -300.0]                 # must be levels of zg
 kd = [findfirst(==(d), zg) for d in line_depths]
@@ -337,8 +355,8 @@ src_style = Dict(
     "ncom900"    => (color = "#eb6834", short = "NCOM 900m"),
     "hycom"      => (color = "#eb6834", short = "HYCOM"),       # takes NCOM 900m's place (third_model)
     "ncom2700"   => (color = "#c9a400", short = "NCOM 2700m"),
-    "roms_cmems" => (color = "#8e44ad", short = "ROMS 2700m"),
-    "cmems"      => (color = "#2e9d5b", short = "CMEMS"),
+    "roms_glorys" => (color = "#8e44ad", short = "ROMS 2700m"),
+    "glorys"      => (color = "#2e9d5b", short = "GLORYS"),
     "french"     => (color = :black,    short = "Mooring"),
 )
 var_unit = Dict("temp" => "°C", "salt" => "psu", "u" => "m/s", "v" => "m/s", "speed" => "m/s", "direction" => "°")
@@ -419,7 +437,7 @@ function binned(d, dt)
                 "salt" => time_average(d.time_ts, d.salt[kd, :], dt)[2])
 end
 
-# raw: 6 h bins (the CMEMS time step; the others are 6 h means); low-passed: 1 day (nothing faster is left)
+# raw: 6 h bins (the GLORYS time step; the others are 6 h means); low-passed: 1 day (nothing faster is left)
 scatter_dt = Dict("raw" => Hour(6), "lp$(round(Int, Tcut))h" => Day(1))
 
 # One row per model, one column per depth, with the 1:1 line; points coloured by date. r = correlation,
@@ -468,16 +486,16 @@ function plot_scatter(B, var; tag, unit,
     return fig
 end
 
-# the CMEMS family only: ROMS 2700m (CMEMS parent) vs mooring, CMEMS vs mooring, ROMS 2700m vs its parent CMEMS
-cmems_pairs = [("roms_cmems", "french"), ("cmems", "french"), ("roms_cmems", "cmems")]
+# the GLORYS family only: ROMS 2700m (GLORYS parent) vs mooring, GLORYS vs mooring, ROMS 2700m vs its parent GLORYS
+glorys_pairs = [("roms_glorys", "french"), ("glorys", "french"), ("roms_glorys", "glorys")]
 
 if haskey(data, "french")
     for (D, tag) in ((data, "raw"), (data_lp, "lp$(round(Int, Tcut))h"))
         B = Dict(k => binned(d, scatter_dt[tag]) for (k, d) in D)
         for (var, _) in time_depth_vars
             plot_scatter(B, var; tag = tag, unit = var_unit[var])
-            plot_scatter(B, var; tag = tag, unit = var_unit[var], pairs = cmems_pairs, subdir = "scatter_cmems",
-                         what = "CMEMS family")
+            plot_scatter(B, var; tag = tag, unit = var_unit[var], pairs = glorys_pairs, subdir = "scatter_glorys",
+                         what = "GLORYS family")
         end
     end
 end

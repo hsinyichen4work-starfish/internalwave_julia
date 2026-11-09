@@ -300,7 +300,7 @@ era5_snap = (era5_taux[:, :, it_era5], era5_tauy[:, :, it_era5])
 era5_snap = (era5_snap..., hypot.(era5_snap...))
 
 comp_titles = ("τx (east)", "τy (north)", "|τ|")
-cmaps       = (:RdBu, :RdBu, :viridis)
+cmaps       = (Reverse(:RdBu), Reverse(:RdBu), :viridis)   # red = positive, blue = negative
 
 # colour limit from the 99th percentile of |values|, rounded up to `step`
 round_lim(x, step) = max(ceil(quantile(filter(isfinite, abs.(x)), 0.99) / step) * step, step)
@@ -385,7 +385,7 @@ function diff_figure(outname, n; tau_lim = nothing, dif_lim = nothing, dpi = 300
         rows = ((1, ncom[c], "NCOM " * comp_titles[c], "", cmaps[c], crange[c]),
                 (2, era5[c], "ERA5 " * comp_titles[c], "", cmaps[c], crange[c]),
                 (4, dif[c],  "NCOM − ERA5 " * comp_titles[c], @sprintf("bias %+.3f, RMSE %.3f", bias, rmse),
-                 :RdBu, (-dif_lim, dif_lim)))
+                 Reverse(:RdBu), (-dif_lim, dif_lim)))
         for (k, (rr, F, ttl, sub, cm, cr)) in enumerate(rows)
             # tick labels only on the outer panels (all panels share the same lon/lat)
             ax = topdown_axis(fig[rr, c]; title = ttl, subtitle = sub, xticks = xt,
@@ -475,39 +475,60 @@ outname = joinpath(figure_path, "wind_stress_NCOM_ERA5_domainmean_timeseries.png
 figsave(outname, fig)
 println("saved plot to ", outname)
 
-## ---------------------------------------------------------------- stick (quiver) time series
-# Daily-mean domain-mean stress vectors as sticks from the time axis; the stick points
-# in the direction the stress acts (towards which the wind blows), north up.
-# The x component is scaled to days so that the angles are true for the fixed axis size.
-stick_w, stick_h = 15 * cm_to_pt, 3.6 * cm_to_pt                  # axis size (pt)
-ndays    = tday(DateTime(last(com_day)) + Day(1))
-stick_ym = 0.15                                                     # y limits ±stick_ym (N m⁻²)
-k_stick  = (ndays / stick_w) / (2 * stick_ym / stick_h)             # days per N m⁻² along x
-ref_tau  = 0.05                                                     # reference stick (N m⁻², eastward)
-
-fig = Figure(; figkw(18, 11)..., figure_padding = (4, 12, 4, 4))
-Label(fig[0, 1], "Domain-mean surface wind stress vectors, daily means " *
-      "(common 0.25° grid, $(count(com_mask)) cells)"; fontsize = 11, tellwidth = false)
-axs = []
-for (r, (name, xs, ys, col)) in enumerate((("ERA5", ts_era5_x, ts_era5_y, col_era5),
-                                           ("NCOM 2700 m", ts_ncom_x, ts_ncom_y, col_ncom)))
-    u, v = daymean(xs), daymean(ys)
-    x0 = tday.(day_mid)
-    ax = Axis(fig[r, 1]; width = stick_w, height = stick_h, ylabel = "N m⁻²",
-              xticks = xticks_dates, xticklabelsvisible = r == 2, xlabel = r == 2 ? "Date (2022)" : "",
-              title = name, titlealign = :left, titlecolor = col)
-    hlines!(ax, 0; color = :gray60, linewidth = 0.8)
-    linesegments!(ax, vec(permutedims(hcat(Point2f.(x0, 0), Point2f.(x0 .+ k_stick .* u, v)))); color = col, linewidth = 1.2)
-    # reference stick
-    xr = ndays - 12
-    linesegments!(ax, [Point2f(xr, 0.8stick_ym), Point2f(xr + k_stick * ref_tau, 0.8stick_ym)]; color = :black, linewidth = 1.5)
-    text!(ax, xr + k_stick * ref_tau + 1, 0.8stick_ym; text = "$(ref_tau) N m⁻²", align = (:left, :center), fontsize = 9)
-    xlims!(ax, -1, ndays + 1)
-    ylims!(ax, -stick_ym, stick_ym)
-    push!(axs, ax)
+## ---------------------------------------------------------------- quiver time series
+# Port of quiver_time_plot.m (phd_island_wake/matlab_tool): arrows from (t, 0) with both
+# components multiplied by the same `scale` (time units per N m⁻²) and an equal data
+# aspect (MATLAB daspect([1 1 1]) -> DataAspect()), so the arrow angles are true.
+# Default scale: one time step per 1.2 × |mean vector|. The y axis has no physical units,
+# so its ticks are hidden; the reference arrow gives the magnitude.
+function time_step_scale(t, u, v)
+    dt = mean(diff(t))
+    return dt / (abs(mean(complex.(u, v))) * 1.2)
 end
-linkxaxes!(axs...)
-rowgap!(fig.layout, 6)
+
+function quiver_time_plot!(ax, t, u, v; scale, color = :black, label = nothing,
+                           shaftwidth = 1.2, tipwidth = 5, tiplength = 5)
+    arrows2d!(ax, Point2f.(t, 0), Vec2f.(scale .* u, scale .* v); color = color, label = label,
+              shaftwidth = shaftwidth, tipwidth = tipwidth, tiplength = tiplength)
+end
+
+# One row per month (x = day of month) so that the panel is not ~70× wider than tall:
+# the angles stay true (same scale for u and v, DataAspect) in every row.
+q_ncom = (daymean(ts_ncom_x), daymean(ts_ncom_y))
+q_era5 = (daymean(ts_era5_x), daymean(ts_era5_y))
+q_fac   = 2                                                  # arrows 2× the MATLAB default length
+q_scale = q_fac * time_step_scale(1:length(days), q_era5...) # days per N m⁻², same for both products
+ref_tau = 0.05                                               # reference arrow (N m⁻², eastward)
+months  = unique(firstdayofmonth.(days))
+xd      = Dates.day.(days)                                   # day of month
+ymax    = 1.15 * maximum(abs, q_scale .* vcat(q_era5[2], q_ncom[2]))
+q_xlim  = (-2.5, 32.5)                                       # room for westward arrows on day 1
+
+fig = Figure(; figkw(18, 12)..., figure_padding = (4, 12, 4, 4))
+Label(fig[-1, 1], "Domain-mean surface wind stress vectors, daily means " *
+      "(common 0.25° grid, $(count(com_mask)) cells)"; fontsize = 11, tellwidth = false)
+Legend(fig[0, 1], [LineElement(color = col_era5, linewidth = 2), LineElement(color = col_ncom, linewidth = 1)],
+       ["ERA5", "NCOM 2700 m"]; orientation = :horizontal, framevisible = false, tellwidth = false, padding = 0)
+for (r, m) in enumerate(months)
+    sel = firstdayofmonth.(days) .== m
+    last_row = r == length(months)
+    ax = Axis(fig[r, 1]; width = 15 * cm_to_pt, aspect = DataAspect(),
+              ylabel = Dates.format(m, "u yyyy"), ylabelrotation = 0,
+              xticks = [1; 5:5:30], xticklabelsvisible = last_row, xlabel = last_row ? "Day of month" : "",
+              yticksvisible = false, yticklabelsvisible = false, ygridvisible = false)
+    hlines!(ax, 0; color = :black, linestyle = :dash, linewidth = 0.8)
+    quiver_time_plot!(ax, xd[sel], q_era5[1][sel], q_era5[2][sel]; scale = q_scale, color = col_era5, shaftwidth = 2)
+    quiver_time_plot!(ax, xd[sel], q_ncom[1][sel], q_ncom[2][sel]; scale = q_scale, color = col_ncom, shaftwidth = 1)
+    if r == 1   # reference arrow in the first row, left of the first data day
+        x_ref = max(q_xlim[1] + 8, minimum(xd[sel]) - q_scale * ref_tau - 4)
+        arrows2d!(ax, [Point2f(x_ref, 0.5ymax)], [Vec2f(q_scale * ref_tau, 0)]; color = :black,
+                  shaftwidth = 1.5, tipwidth = 5, tiplength = 5)
+        text!(ax, x_ref - 0.5, 0.5ymax; text = "$(ref_tau) N m⁻²", align = (:right, :center), fontsize = 9)
+    end
+    xlims!(ax, q_xlim...)
+    ylims!(ax, -ymax, ymax)
+end
+rowgap!(fig.layout, 4)
 resize_to_layout!(fig)
 outname = joinpath(figure_path, "wind_stress_NCOM_ERA5_quiver.png")
 figsave(outname, fig)
@@ -555,6 +576,102 @@ Colorbar(fig[1, 3], sc; label = "Date (2022)",
                   Dates.format.(Date(2022, 9, 1):Month(1):Date(2022, 12, 1), "mm-dd")))
 colgap!(fig.layout, 10)
 outname = joinpath(figure_path, "wind_stress_NCOM_ERA5_scatter.png")
+figsave(outname, fig)
+println("saved plot to ", outname)
+
+## ---------------------------------------------------------------- ERA5 drag coefficient
+# Bulk formula τ = ρ_air C_d |U10| U10, solved for C_d with ERA5's own stress and 10 m wind,
+# on the ocean cells of the common box (com_mask) over the common period.
+# avg_* is the mean over the hour ending at t, so the instantaneous wind term |U|U at
+# t-1 h and t is averaged to match it.
+# ERA5's stress depends on stability and the wave model (Charnock), so this is an
+# effective C_d, not the neutral one.
+rho_air  = 1.165   # kg m⁻³ (1.16–1.17 over the tropical ocean)
+inst_idx = Dict(t => k for (k, t) in enumerate(era5_time_inst))
+cd_time  = filter(t -> haskey(inst_idx, t) && haskey(inst_idx, t - Hour(1)), com_time)
+ncd, ntd = count(com_mask), length(cd_time)
+cd_Sx, cd_Sy, cd_U2, cd_U = (zeros(ncd, ntd) for _ in 1:4)   # |U|U (x, y), |U|², |U| (hour means)
+cd_Tx, cd_Ty = zeros(ncd, ntd), zeros(ncd, ntd)               # ERA5 stress
+for (n, t) in enumerate(cd_time)
+    for k in (inst_idx[t - Hour(1)], inst_idx[t])
+        u = Float64.(view(era5_u10, box_i, box_j, k)[com_mask])
+        v = Float64.(view(era5_v10, box_i, box_j, k)[com_mask])
+        s = hypot.(u, v)
+        cd_Sx[:, n] .+= s .* u ./ 2;  cd_Sy[:, n] .+= s .* v ./ 2
+        cd_U2[:, n] .+= s .^ 2 ./ 2;  cd_U[:, n]  .+= s ./ 2
+    end
+    ka = findfirst(==(t), era5_time_avg)
+    cd_Tx[:, n] = view(era5_taux, box_i, box_j, ka)[com_mask]
+    cd_Ty[:, n] = view(era5_tauy, box_i, box_j, ka)[com_mask]
+end
+cd_ok   = isfinite.(cd_Tx) .& isfinite.(cd_Ty) .& isfinite.(cd_Sx)
+cd_tau  = hypot.(cd_Tx, cd_Ty)
+# (1) vector least squares through the origin: minimises Σ|τ - ρ C_d |U|U|²
+cd_fit  = sum((cd_Tx .* cd_Sx .+ cd_Ty .* cd_Sy)[cd_ok]) / (rho_air * sum((cd_Sx .^ 2 .+ cd_Sy .^ 2)[cd_ok]))
+# (2) ratio of means: mean|τ| / (ρ mean|U|²)
+cd_rom  = mean(cd_tau[cd_ok]) / (rho_air * mean(cd_U2[cd_ok]))
+# (3) point by point C_d = |τ| / (ρ|U|²), only where |U10| > 3 m s⁻¹ (C_d is ill-defined in weak wind)
+cd_pt   = cd_tau ./ (rho_air .* cd_U2)
+cd_sel  = cd_ok .& (cd_U .> 3)
+cd_q    = quantile(cd_pt[cd_sel], (0.25, 0.5, 0.75))
+# alignment of stress with the wind
+cd_cos  = mean(((cd_Tx .* cd_Sx .+ cd_Ty .* cd_Sy) ./ (cd_tau .* hypot.(cd_Sx, cd_Sy)))[cd_sel])
+println(@sprintf("ERA5 C_d (ρ_air = %.3f kg m⁻³, %d cells × %d h):", rho_air, ncd, ntd))
+println(@sprintf("  vector least-squares fit     : %.3f × 10⁻³", 1e3 * cd_fit))
+println(@sprintf("  mean|τ| / (ρ mean|U|²)       : %.3f × 10⁻³", 1e3 * cd_rom))
+println(@sprintf("  point C_d (|U| > 3), median  : %.3f × 10⁻³ (IQR %.3f–%.3f), mean %.3f × 10⁻³",
+                 1e3 * cd_q[2], 1e3 * cd_q[1], 1e3 * cd_q[3], 1e3 * mean(cd_pt[cd_sel])))
+println(@sprintf("  mean |U10| = %.2f m s⁻¹, mean cos(τ, U) = %.4f", mean(cd_U[cd_ok]), cd_cos))
+# ρ_air sensitivity: C_d ∝ 1/ρ_air
+println(@sprintf("  fit with ρ_air = 1.16 / 1.17 : %.3f / %.3f × 10⁻³",
+                 1e3 * cd_fit * rho_air / 1.16, 1e3 * cd_fit * rho_air / 1.17))
+
+# C_d in 1 m s⁻¹ wind-speed bins, with Large & Yeager (2004) neutral C_d for reference
+cd_edges = 0:1:14
+cd_bins  = [(; u = (a + b) / 2, q = (sel = cd_ok .& (a .<= cd_U .< b); count(sel) >= 100 ?
+             quantile(cd_pt[sel], (0.25, 0.5, 0.75)) : (NaN, NaN, NaN)), n = count(cd_ok .& (a .<= cd_U .< b)))
+            for (a, b) in zip(cd_edges[1:end-1], cd_edges[2:end])]
+for b in cd_bins
+    b.n > 0 && println(@sprintf("  |U10| %4.1f m s⁻¹: median C_d %.3f × 10⁻³ (n = %d)", b.u, 1e3 * b.q[2], b.n))
+end
+cd_LY04(u) = (2.7 / u + 0.142 + u / 13.09) * 1e-3
+
+fig = Figure(; figkw(18, 8.5)..., figure_padding = (4, 12, 4, 4))
+Label(fig[0, 1:3], @sprintf("ERA5 drag coefficient from τ = ρ_air C_d |U10| U10 (ρ_air = %.3f kg m⁻³), common box, hourly",
+                            rho_air); fontsize = 10, tellwidth = false)
+# (a) 2D histogram of |τ| vs ρ|U|²
+xa, ya = rho_air .* cd_U2[cd_ok], cd_tau[cd_ok]
+xmax = quantile(xa, 0.999); ymax = quantile(ya, 0.999)
+nb = 120
+H  = zeros(nb, nb)
+for (x, y) in zip(xa, ya)
+    i = floor(Int, x / xmax * nb) + 1; j = floor(Int, y / ymax * nb) + 1
+    (i <= nb && j <= nb) && (H[i, j] += 1)
+end
+H[H .== 0] .= NaN
+ax = Axis(fig[1, 1]; xlabel = "ρ_air |U10|² (kg m⁻¹ s⁻²)", ylabel = "ERA5 |τ| (N m⁻²)", title = "(a) |τ| vs ρ|U10|²")
+hm = heatmap!(ax, range(0, xmax; length = nb + 1), range(0, ymax; length = nb + 1), log10.(H); colormap = :viridis)
+lines!(ax, [0, xmax], 2e-3 .* [0, xmax]; color = :black, linestyle = :dash, linewidth = 1, label = "C_d = 2×10⁻³")
+lines!(ax, [0, xmax], 1e-3 .* [0, xmax]; color = :black, linestyle = :dot, linewidth = 1.2, label = "C_d = 1×10⁻³")
+lines!(ax, [0, xmax], cd_fit .* [0, xmax]; color = :red, linewidth = 1.5, label = @sprintf("fit %.2f×10⁻³", 1e3 * cd_fit))
+axislegend(ax; position = :lt, framevisible = true, framecolor = :gray70, backgroundcolor = :white,
+           labelsize = 8, rowgap = 0, patchsize = (14, 8), padding = (4, 4, 2, 2))
+xlims!(ax, 0, xmax); ylims!(ax, 0, ymax)
+Colorbar(fig[1, 2], hm; label = "log₁₀ count", width = 8)
+# (b) C_d vs wind speed
+ax = Axis(fig[1, 3]; xlabel = "|U10| (m s⁻¹)", ylabel = "C_d (×10⁻³)", title = "(b) C_d vs wind speed")
+good = filter(b -> isfinite(b.q[2]), cd_bins)
+band!(ax, [b.u for b in good], [1e3 * b.q[1] for b in good], [1e3 * b.q[3] for b in good]; color = (col_era5, 0.25))
+scatterlines!(ax, [b.u for b in good], [1e3 * b.q[2] for b in good]; color = col_era5, markersize = 5, label = "ERA5 median (IQR)")
+uu = range(2, 14; length = 100)
+lines!(ax, uu, 1e3 .* cd_LY04.(uu); color = :black, linestyle = :dash, linewidth = 1, label = "Large & Yeager 2004 (neutral)")
+hlines!(ax, 1e3 * cd_fit; color = :red, linewidth = 1, label = @sprintf("fit %.2f×10⁻³", 1e3 * cd_fit))
+hlines!(ax, 1e3 * cd_q[2]; color = col_era5, linewidth = 1, linestyle = :dash,
+        label = @sprintf("median %.2f×10⁻³ (|U10| > 3)", 1e3 * cd_q[2]))
+xlims!(ax, 0, 14); ylims!(ax, 0, 3)
+axislegend(ax; position = :rt, framevisible = false, labelsize = 8, rowgap = 0, patchsize = (14, 8))
+colgap!(fig.layout, 8)
+outname = joinpath(figure_path, "wind_stress_ERA5_Cd.png")
 figsave(outname, fig)
 println("saved plot to ", outname)
 
