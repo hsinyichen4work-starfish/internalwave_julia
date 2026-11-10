@@ -15,6 +15,7 @@
 # pn, un, vn of the first NMODE modes from the his files (DFF/bcef_modes_puv.jl): 15 workers read and project the files
 # in parallel; the main process writes each batch and frees it. Run (default 3 modes, 3-month run):
 #   sbatch --export=ALL,DFF_RUN=amazon_900m_pure_or,NMODE=3 julia_bcef_modes.sh
+#   sbatch --export=ALL,DFF_RUN=amazon_2700m_cmems_0801,START_DATE=2022-08-24,BCEF_OUT=/expanse/lustre/projects/uso102/hchen54/amazon_2700m_cmems_0801/ddf_bcef_0824 julia_bcef_modes.sh   (skip the spin-up)
 set -o pipefail   # job shows FAILED (not COMPLETED) when julia fails, despite the tee
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia

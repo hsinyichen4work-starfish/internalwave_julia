@@ -25,7 +25,9 @@ using Distributed
 # Also saved: time sums of H pn² per mode and of ∫p'² dz at every point, for maps of each mode's share of p' variance.
 # u, v, un, vn are along the grid's xi / eta directions (not rotated to east / north), like the saved fluxes.
 #
-# Settings (environment): NMODE (default 3), BCEF_OUT (output folder), BCEF_TEST=true (first 8 files only).
+# Settings (environment): NMODE (default 3), BCEF_OUT (output folder), BCEF_TEST=true (first 8 files only),
+#   START_DATE=2022-08-24 (skip the spin-up: his files before it are not read; use a new BCEF_OUT, as the structure
+#   file there is reused if present).
 
 n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "3")) - 1)   # -1 reserves a CPU for this main process
 job_mem_mb = parse(Int, get(ENV, "SLURM_MEM_PER_NODE", "16000"))
@@ -51,6 +53,13 @@ println("running with $(nprocs() - 1) worker processes, heap size hint $(heap_mb
     puv_fname = joinpath(out_dir, "bcef_modes$(NMODE)_puv.nc")
 
     his_files = joinpath.(datadir, sort(filter(f -> occursin(r"^roms_his\.\d{14}\.nc$", f), readdir(datadir))))
+    # START_DATE (e.g. 2022-08-24): drop the his files before it (spin-up), so the record means (rho, N², φ), the
+    # projections and the variance sums all cover the same window. Each file name is the time of its first record.
+    if haskey(ENV, "START_DATE")
+        t_start = DateTime(ENV["START_DATE"])
+        his_files = filter(f -> DateTime(match(r"(\d{14})\.nc$", f)[1], DateFormat("yyyymmddHHMMSS")) >= t_start, his_files)
+        isempty(his_files) && error("no his file at or after START_DATE = $t_start")
+    end
     # BCEF_TEST=true: only the first 8 files (32 hours) — for checking the script, not for the analysis
     get(ENV, "BCEF_TEST", "false") == "true" && (his_files = his_files[1:8])
 

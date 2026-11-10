@@ -72,7 +72,10 @@ ix_line = round(Int, 0.5 + nx / 2)
 line_targets = [("shelf", 100.0), ("upper slope", 1000.0), ("lower slope", 2000.0)]   # [m]
 line_dists = [("200 km node", 200.0)]   # [km] along the line
 line_moorings = ["M1", "CPIES3", "french", "CPIES7"]
-edge = 60
+edge_km = parse(Float64, get(ENV, "EDGE_KM", "54"))   # [km] masked along each edge (sponge / boundary): 60 points on the 900 m grid
+dx_km = NCDataset(g -> mean(1 ./ Float64.(g["pm"][:, :])) / 1e3, run_grid_fname)   # mean grid spacing [km]
+edge = round(Int, edge_km / dx_km)                     # the same distance in grid points (900 m: 60, 2700 m: 20)
+println("edge bands: $edge_km km = $edge points (grid spacing $(round(dx_km, digits = 2)) km)")
 h_avg = 3000.0   # [m]
 
 first_deeper(H) = findfirst(>=(H), h[ix_line, :])
@@ -223,7 +226,7 @@ function line_panels(fname, title, panels)
     end
     linkxaxes!(axs...)
     foreach(ax -> hidexdecorations!(ax; grid = false), axs[1:end-1])
-    Label(fig[np + 2, 1], "shelf (h < $(Int(h_mask)) m) not drawn; grey shading: $edge-point edge bands;\ngrey vertical lines: moorings on the line; dashed: analysis points"; fontsize = 8pt, tellwidth = false)
+    Label(fig[np + 2, 1], "shelf (h < $(Int(h_mask)) m) not drawn; grey shading: $(round(Int, edge_km)) km ($edge-point) edge bands;\ngrey vertical lines: moorings on the line; dashed: analysis points"; fontsize = 8pt, tellwidth = false)
     # data panels share ~75 % of the height, the bathymetry ~20 % (first panel larger when there are two)
     hb = np == 1 ? 0.27 : 0.2
     for k in 1:np
@@ -492,7 +495,7 @@ let fig = Figure(size = (1500, 820))
         Legend(fig[3, n], ax; nbanks = 2, framevisible = false, labelsize = 11, patchsize = (12, 12), rowgap = 0, tellheight = true)
     end
     Label(fig[0, :], "$dff_run: share of the baroclinic pressure variance in each mode (pvar_mode / pvar_total, all frequencies)\n" *
-                     "masked: h < $(Int(h_mask)) m and $edge edge points;  white dotted / dashed / solid: $(join(share_isobaths, " / ")) m;  " *
+                     "masked: h < $(Int(h_mask)) m and $(round(Int, edge_km)) km ($edge points) at the edges;  white dotted / dashed / solid: $(join(share_isobaths, " / ")) m;  " *
                      "yellow: moorings;  legend: share at each point";
           fontsize = 14)
     rowgap!(fig.layout, 8)
