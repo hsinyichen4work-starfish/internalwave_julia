@@ -22,7 +22,7 @@ bcef_dir = get(ENV, "BCEF_OUT", joinpath(run_dir, "ddf_bcef"))
 flux_fname = joinpath(bcef_dir, "bcef_dff_flux_modes$(NMODE).nc")
 transect_fname(lname, ix) = joinpath(bcef_dir, "bcef_dff_flux_modes$(NMODE)_transect_$(lname)_xi$(ix).nc")
 # which modes to draw: BCEF_MODES=mode1,modesum (default: every mode and their sum)
-mode_tags = split(get(ENV, "BCEF_MODES", join([["mode$n" for n in 1:NMODE]; "modesum"], ",")), ",")
+mode_tags = split(get(ENV, "BCEF_MODES", join([["mode$n" for n in 1:NMODE]; "modesum"], ",")), r"[,:; ]+"; keepempty = false)
 mode_desc(m) = m == "modesum" ? "modes 1-$NMODE (sum)" : replace(m, "mode" => "mode-")
 fig_root = joinpath(dirname(fig_dir), "DFF_energyflux", "modes$(NMODE)")
 figure_path = fig_root   # set per mode in the loop below

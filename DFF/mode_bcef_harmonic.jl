@@ -39,10 +39,10 @@ include("/home/hchen54/internalwave_julia/function/harm_fit.jl")      # harm_fit
 
 ## --- section 1: settings
 NMODE   = parse(Int, get(ENV, "NMODE", "3"))                        # modes in the puv file
-MODES   = parse.(Int, split(get(ENV, "HARM_MODES", "1,2"), ","))     # modes to fit
+MODES   = parse.(Int, split(get(ENV, "HARM_MODES", "1,2"), r"[,:; ]+"; keepempty = false))     # modes to fit
 # tides as ssh_harmonic.jl, plus the shallow-water overtides (steepening / nonlinear waves): M4, MS4, MN4, M6.
 # All resolved by ~95 days of hourly data (MN4-M4: 3.4 cycles apart; M6 period 4.1 h > the 2 h Nyquist period).
-CONS    = String.(split(get(ENV, "HARM_CONS", "M2,S2,N2,K1,O1,M4,MS4,MN4,M6"), ","))
+CONS    = String.(split(get(ENV, "HARM_CONS", "M2,S2,N2,K1,O1,M4,MS4,MN4,M6"), r"[,:; ]+"; keepempty = false))
 SPINUP  = parse(Float64, get(ENV, "SPINUP", "3.0"))                  # days dropped at the start
 STRIDE  = parse(Int, get(ENV, "STRIDE", "1"))
 t_ref   = DateTime(1994, 1, 1)                                       # ocean_time reference

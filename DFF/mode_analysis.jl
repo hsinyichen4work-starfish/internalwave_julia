@@ -17,9 +17,10 @@ run_mooring = Dict("amazon_2700m_cmems_0801" => "roms_cmems_grd_2700m_mor_edata.
 mooring_file = "/expanse/lustre/projects/uso102/hchen54/input/grid/$(get(run_mooring, dff_run, "roms_grd_900m_mor_edata.nc"))"
 puv_fname = joinpath(bcef_dir, NMODE == 1 ? "bcef_mode1_puv.nc" : "bcef_modes$(NMODE)_puv.nc")   # steps 4 and 5
 h_mask = 200.0   # [m] shelf not drawn in steps 4 and 5
-# steps to run after (1) and (2), which always run: MODE_STEPS=5 or MODE_STEPS=4,5 (default all: 3,4,5,6,7,8,9,10).
+# steps to run after (1) and (2), which always run: MODE_STEPS=5 or MODE_STEPS=4,5 (default all: 3,4,5,6,7,8,9,10);
+# also 4:5 or "4 5" — sbatch --export splits on commas, so there write MODE_STEPS=4:5.
 # Step 3 reads ~200 MB of the structure file and step 5 the whole pn record once (then a small cache file).
-mode_steps = parse.(Int, split(get(ENV, "MODE_STEPS", "3,4,5,6,7,8,9,10"), ","))
+mode_steps = parse.(Int, split(get(ENV, "MODE_STEPS", "3,4,5,6,7,8,9,10"), r"[,:; ]+"; keepempty = false))
 println("steps: 1, 2, ", join(mode_steps, ", "))
 
 # ============================================================================

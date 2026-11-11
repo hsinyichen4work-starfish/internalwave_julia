@@ -17,8 +17,8 @@
 # The first run reads pn, un, vn along the line from the puv file once (~1-2 h on a slow Lustre) and caches them in
 # ddf_bcef/bcef_modes<N>_{p,uv}_line_xi<ix>.nc (~75 MB); later runs take a few minutes.
 # Run: sbatch julia_mode_analysis.sh
-#      sbatch --export=ALL,MODE_STEPS=3,4,5,6,7,8 julia_mode_analysis.sh                 all steps
-#      sbatch --export=ALL,DFF_RUN=amazon_2700m_cmems_0801,MODE_STEPS=5,7 julia_mode_analysis.sh   another run
+#      sbatch --export=ALL,MODE_STEPS=3:4:5:6:7:8:9:10 julia_mode_analysis.sh   all steps (":" not ",": --export splits on commas)
+#      sbatch --export=ALL,DFF_RUN=amazon_2700m_cmems_0801,MODE_STEPS=5:7 julia_mode_analysis.sh   another run
 set -o pipefail   # job shows FAILED (not COMPLETED) when julia fails, despite the tee
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia

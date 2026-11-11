@@ -49,8 +49,8 @@ node_km = parse(Float64, get(ENV, "NODE_KM", "200"))            # [km] node mark
 ## --- read the fit
 ds = NCDataset(harm_fname)
 cons = String.(ds["con"][:])
-PLOT_CONS = PLOT_CONS_ENV == "all" ? cons : String.(split(PLOT_CONS_ENV, ","))
-FLUX_CONS = FLUX_CONS_ENV == "all" ? cons : String.(split(FLUX_CONS_ENV, ","))
+PLOT_CONS = PLOT_CONS_ENV == "all" ? cons : String.(split(PLOT_CONS_ENV, r"[,:; ]+"; keepempty = false))
+FLUX_CONS = FLUX_CONS_ENV == "all" ? cons : String.(split(FLUX_CONS_ENV, r"[,:; ]+"; keepempty = false))
 modes = parse.(Int, split(ds.attrib["modes"], ","))
 lon, lat, h = ds["lon_rho"][:, :], ds["lat_rho"][:, :], Float64.(ds["h"][:, :])
 nx, ny = size(h)
