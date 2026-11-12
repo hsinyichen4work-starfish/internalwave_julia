@@ -220,8 +220,9 @@ filt_order = 4
 # Butterworth + filtfilt (butter_filters.jl) along time, row by row of a (nz, nt) field. filtfilt needs an
 # evenly sampled series with no NaN, so per row: keep the span between the first and last valid sample, fill
 # the gaps inside it linearly in time, filter, then put NaN back where the data were missing.
-function lowpass_rows(time, f, Tcut; N = filt_order)
-    dt = median(Dates.value.(diff(time))) / 3_600_000      # sampling interval (hours), same unit as Tcut
+# filt(y, dt) does the filtering of one gap-free row sampled every dt hours.
+function filter_rows(time, f, filt)
+    dt = median(Dates.value.(diff(time))) / 3_600_000      # sampling interval (hours)
     out = fill(NaN, size(f))
     for k in axes(f, 1)
         good = findall(!isnan, f[k, :])
@@ -232,18 +233,39 @@ function lowpass_rows(time, f, Tcut; N = filt_order)
                 y[i] = y[a] + (y[b] - y[a]) * (i - a) / (b - a)
             end
         end
-        yf = lowhighpass_butter(y, Tcut, dt, N, "low")
+        yf = filt(y, dt)
         out[k, good] = yf[good .- good[1] .+ 1]
     end
     return out
 end
 
-lowpass(d::MoorData, Tcut) = MoorData(d.z,
-    d.time_uv, lowpass_rows(d.time_uv, d.u, Tcut), lowpass_rows(d.time_uv, d.v, Tcut),
-    d.time_ts, lowpass_rows(d.time_ts, d.temp, Tcut), lowpass_rows(d.time_ts, d.salt, Tcut))
+lowpass_rows(time, f, Tcut; N = filt_order) = filter_rows(time, f, (y, dt) -> lowhighpass_butter(y, Tcut, dt, N, "low"))
+
+filter_data(d::MoorData, filt) = MoorData(d.z,
+    d.time_uv, filter_rows(d.time_uv, d.u, filt), filter_rows(d.time_uv, d.v, filt),
+    d.time_ts, filter_rows(d.time_ts, d.temp, filt), filter_rows(d.time_ts, d.salt, filt))
+lowpass(d::MoorData, Tcut) = filter_data(d, (y, dt) -> lowhighpass_butter(y, Tcut, dt, filt_order, "low"))
 
 # low-passed copy of every source, same layout: data_lp["ncom2700"].u, ...
 data_lp = Dict(k => lowpass(d, Tcut) for (k, d) in data)
+
+## 9-15 h band-pass (semidiurnal / near-inertial) and 9 h high-pass
+Tband = (9.0, 15.0)   # band-pass cutoff periods (hours)
+Thp   = 9.0           # high-pass cutoff period (hours)
+
+# A source can only be band/high-passed when its Nyquist period (2 dt) is shorter than the shortest cutoff:
+# GLORYS (6 h, Nyquist 12 h) is skipped for both. HYCOM GOFS 3.1 has no tides, so it is left out too (nothing to show).
+no_tide = ("hycom",)
+dt_hours(d::MoorData) = median(Dates.value.(diff(d.time_uv))) / 3_600_000
+resolves(d::MoorData, Tmin) = 2 * dt_hours(d) < Tmin
+for (k, d) in data
+    resolves(d, min(Tband[1], Thp)) || println("$k: sampled every $(dt_hours(d)) h, too coarse for the $(Tband[1]) h cutoff, skipped in band/high-pass")
+end
+
+data_bp = Dict(k => filter_data(d, (y, dt) -> bandpass_butter(y, Tband[1], Tband[2], dt, filt_order))
+               for (k, d) in data if resolves(d, Tband[1]) && !(k in no_tide))
+data_hp = Dict(k => filter_data(d, (y, dt) -> lowhighpass_butter(y, Thp, dt, filt_order, "high"))
+               for (k, d) in data if resolves(d, Thp) && !(k in no_tide))
 
 ### ===== time-depth figures: one figure per variable, one panel per source (stacked), raw and low-passed =====
 site = "$moor mooring ($(mor_loc[moor][2])°N, $(-mor_loc[moor][1])°W)"
@@ -276,8 +298,16 @@ time_depth_vars = [
 rowmean(a) = [(g = filter(!isnan, a[k, :]); isempty(g) ? NaN : mean(g)) for k in axes(a, 1)]
 eke(d) = 0.5 .* ((d.u .- rowmean(d.u)) .^ 2 .+ (d.v .- rowmean(d.v)) .^ 2)
 eke_max = 0.3      # colour limit (m²/s²); lower it if most of the panels look washed out
+# KE of the band-/high-passed flow: the filtered u, v already have ~zero mean, so KE = 0.5 * (u^2 + v^2)
+ke(d) = 0.5 .* (d.u .^ 2 .+ d.v .^ 2)
+# envelope of the KE: square it, low-pass at Tcut (28 h), square root back (max(0, ...) guards against
+# small negative values from filter ringing)
+ke_env(d) = sqrt.(max.(lowpass_rows(d.time_uv, ke(d) .^ 2, Tcut), 0))
+ke_max = 0.05      # colour limit (m²/s²) for the band-/high-passed KE; adjust after a first look
 extra_time_depth_vars = [
     "EKE" => (eke, d -> d.time_uv, (0, eke_max), 0:eke_max/6:eke_max, :amp, "EKE (m²/s²)"),
+    "KE"  => (ke,  d -> d.time_uv, (0, ke_max),  0:ke_max/5:ke_max,   :amp, "KE (m²/s²)"),
+    "KE_envelope" => (ke_env, d -> d.time_uv, (0, ke_max), 0:ke_max/5:ke_max, :amp, "KE envelope (m²/s²)"),
 ]
 
 # model field f (nz, nt) on times t, blanked wherever the mooring field fm (nz, ntm) on times tm is NaN at the
@@ -297,6 +327,12 @@ function mask_like(t, f, tm, fm)
     return out
 end
 
+# figure-title text of each filter tag
+tag_desc = Dict("raw" => "raw", "lp$(round(Int, Tcut))h" => "$(round(Int, Tcut)) h low-passed",
+                "bp$(round(Int, Tband[1]))-$(round(Int, Tband[2]))h" => "$(round(Int, Tband[1]))-$(round(Int, Tband[2])) h band-passed",
+                "hp$(round(Int, Thp))h" => "$(round(Int, Thp)) h high-passed")
+
+# KE and KE_envelope (band-/high-pass) are drawn without contour lines; its levels are only the colourbar ticks
 # masked = true: the models are shown only where (and when) the French mooring has data for that variable
 function plot_time_depth(D, var; tag, masked = false)
     field, tfun, clim, levels, colormap, cblabel = Dict(vcat(time_depth_vars, extra_time_depth_vars))[var]
@@ -314,7 +350,7 @@ function plot_time_depth(D, var; tag, masked = false)
             f = mask_like(t, f, tfun(m), field(m))
         end
         hm = heatmap!(ax, tday(t), d.z, f'; colormap = colormap, colorrange = clim)
-        levels === nothing || contour!(ax, tday(t), d.z, f'; levels = levels, color = (:black, 0.3), linewidth = 0.6)
+        (levels === nothing || startswith(var, "KE")) || contour!(ax, tday(t), d.z, f'; levels = levels, color = (:black, 0.3), linewidth = 0.6)
         push!(axs, ax)
     end
     linkaxes!(axs...)
@@ -323,7 +359,7 @@ function plot_time_depth(D, var; tag, masked = false)
     hidexdecorations!.(axs[1:end-1]; ticks = false)
     axs[end].xlabel = "Date (2022)"
     Colorbar(fig[1:length(srcs), 2], hm; label = cblabel, ticks = levels === nothing ? (0:90:360) : levels)
-    Label(fig[0, :], "$(var), $(tag == "raw" ? "raw" : "$(round(Int, Tcut)) h low-passed"), at the $site" *
+    Label(fig[0, :], "$(var), $(tag_desc[tag]), at the $site" *
                      (masked ? ", masked to mooring coverage" : ""), fontsize = 11, tellwidth = false)
     rowgap!(fig.layout, 5)
     colgap!(fig.layout, 6)
@@ -344,6 +380,13 @@ for masked in (false, true)
     plot_time_depth(data_lp, "EKE"; tag = "lp$(round(Int, Tcut))h", masked = masked)
 end
 
+# KE of the 9-15 h band-passed and the 9 h high-passed flow
+for (D, tag) in ((data_bp, "bp$(round(Int, Tband[1]))-$(round(Int, Tband[2]))h"), (data_hp, "hp$(round(Int, Thp))h")),
+    masked in (false, true)
+    plot_time_depth(D, "KE"; tag = tag, masked = masked)
+    plot_time_depth(D, "KE_envelope"; tag = tag, masked = masked)
+end
+
 ## ===== line plots at fixed depths, and scatter plots of each model against the mooring =====
 line_depths = [-200.0, -250.0, -300.0]                 # must be levels of zg
 kd = [findfirst(==(d), zg) for d in line_depths]
@@ -360,7 +403,7 @@ src_style = Dict(
     "french"     => (color = :black,    short = "Mooring"),
 )
 var_unit = Dict("temp" => "°C", "salt" => "psu", "u" => "m/s", "v" => "m/s", "speed" => "m/s", "direction" => "°")
-tagname(tag) = tag == "raw" ? "raw" : "$(round(Int, Tcut)) h low-passed"
+tagname(tag) = tag_desc[tag]
 
 # one panel per depth, one line per source (direction as dots: a line would jump at the 0/360 wrap)
 function plot_lines_at_depth(D, var; tag)
