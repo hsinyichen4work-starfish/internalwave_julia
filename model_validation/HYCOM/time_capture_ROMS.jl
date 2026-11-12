@@ -24,7 +24,11 @@ colorbar_file = proj * "data_upload/colorbar_nc.nc"   # HYCOM color ranges, writ
 ## settings
 plot_depths = [0, 100, 200]   # depths (m) to plot at: 0 = the top sigma layer, others interpolated
 
-# HYCOM snapshot times (12:00 UTC); the HYCOM files aren't on Expanse, so they're listed here
+# HYCOM snapshot times (12:00 UTC); the HYCOM files aren't on Expanse, so they're listed here.
+# These are VALID times (the files' `time` variable, as hycom_snapshots in
+# hycom_times.jl returns on the local machine), checked 2026-11-12 for the
+# t0000 files in /home/mbui/ModelOutput/NCOM/HYCOM_data/ — if other HYCOM
+# files are compared, take their times from hycom_snapshots, not their names.
 hycom_times = [DateTime(2022, 8, 1, 12), DateTime(2022, 9, 1, 12), DateTime(2022, 10, 1, 12),
                DateTime(2022, 11, 1, 12), DateTime(2022, 11, 28, 12)]
 

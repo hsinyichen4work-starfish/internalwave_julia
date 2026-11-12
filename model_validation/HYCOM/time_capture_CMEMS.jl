@@ -2,6 +2,7 @@ using NCDatasets, CairoMakie, Dates, Statistics
 CairoMakie.activate!()
 include("/home/hsinyi/Documents/Julia/function/load_all.jl")
 include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
+include(joinpath(@__DIR__, "hycom_times.jl"))   # hycom_snapshots: times from each file's `time` variable
 
 # Same maps as HYCOM_data.jl / time_capture_NCOM.jl (SSH, temperature, salinity,
 # current speed, with velocity arrows, grid outlines and moorings), but from
@@ -36,8 +37,8 @@ colorbar_file = "/home/hsinyi/figure/20261016_hycomdata/colorbar_nc.nc"   # HYCO
 plot_depths = [0, 100, 200]
 
 ## times: every HYCOM time with a matching record in all CMEMS files
-hycom_times = sort(unique([DateTime(match(r"glbz04_(\d{10})_", f)[1], dateformat"yyyymmddHH")
-                           for f in readdir(hycom_dir) if endswith(f, ".nc")]))
+# (valid times from the HYCOM `time` variable, not the file names)
+hycom_times = [s.valid for s in hycom_snapshots(hycom_dir)]
 file_times = Dict(f => NCDataset(ds -> ds["time"][:], f)
                   for f in (cur_surf_file, temp_surf_file, salt_surf_file, cur_file, temp_file, salt_file, sl_file))
 # (time, Dict file => record index) for each overlapping time

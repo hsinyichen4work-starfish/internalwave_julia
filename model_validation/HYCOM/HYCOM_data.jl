@@ -2,6 +2,7 @@ using NCDatasets, CairoMakie, Dates, Statistics
 CairoMakie.activate!()
 include("/home/hsinyi/Documents/Julia/function/load_all.jl")
 include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
+include(joinpath(@__DIR__, "hycom_times.jl"))   # hycom_snapshots: times from each file's `time` variable
 
 ## path setting
 datadir = "/home/mbui/ModelOutput/NCOM/HYCOM_data/"   # GOFS 3.5 HYCOM 1/25° global: <yyyymmddhh>_t0000_{ssh,ts3z,uv3z}.nc
@@ -21,17 +22,19 @@ colorbar_file = joinpath(figure_path, "colorbar_nc.nc")   # color range of every
 ## settings
 plot_depths = [0, 100, 200, 250]   # depths (m) to plot temp/salt/speed at — must be HYCOM z-levels (printed below)
 
-## list the files, grouped by date
-files = sort(filter(f -> endswith(f, ".nc"), readdir(datadir)))
-dates = unique([match(r"glbz04_(\d{10})_", f)[1] for f in files])   # "2022080112", ...
-println("$(length(files)) files, $(length(dates)) dates in $datadir")
-for d in dates
-    println("  ", d, ": ", join(filter(f -> occursin(d, f), files), ", "))
+## list the snapshots by valid time (the `time` variable, hours since 2000-01-01),
+# not the file name: the name holds the analysis time and the forecast hour
+snaps = hycom_snapshots(datadir)
+println("$(length(snaps)) snapshots in $datadir")
+for s in snaps
+    println("  valid ", Dates.format(s.valid, "yyyy-mm-dd HH:MM"), "  (analysis ",
+        Dates.format(s.analysis, "yyyy-mm-dd HH:MM"), " + ", round(Int, s.tau), " h): ",
+        join(basename.(values(s.files)), ", "))
 end
 
 ## print the header (dims, variables, units, time) of one file of each type
 for kind in ["ssh", "ts3z", "uv3z"]
-    fname = joinpath(datadir, "gofs35_hycom_glbz04_$(dates[1])_t0000_$(kind).nc")
+    fname = snaps[1].files[kind]
     NCDataset(fname) do ds
         println("\n==== $kind  ($(basename(fname))) ====")
         println("dims: ", Dict(k => v for (k, v) in ds.dim))
@@ -45,7 +48,7 @@ for kind in ["ssh", "ts3z", "uv3z"]
 end
 
 ## grid (same for all files): lon 0..360, lat -80.48..90, 40 z-levels
-lon, lat, depth = NCDataset(joinpath(datadir, "gofs35_hycom_glbz04_$(dates[1])_t0000_ts3z.nc")) do ds
+lon, lat, depth = NCDataset(snaps[1].files["ts3z"]) do ds
     ds["lon"][:], ds["lat"][:], ds["depth"][:]
 end
 lon180 = ifelse.(lon .> 180, lon .- 360, lon)   # -180..180 (east/west hemisphere)
@@ -201,9 +204,10 @@ end
 
 ## plot for every date: SSH and SSH gradient (with surface arrows) once, then temperature,
 # salinity and current speed at each of plot_depths, with that depth's arrows
-for d in dates
-    f(kind) = joinpath(datadir, "gofs35_hycom_glbz04_$(d)_t0000_$(kind).nc")
-    t = DateTime(d, dateformat"yyyymmddHH")
+for s in snaps
+    f(kind) = s.files[kind]
+    t = s.valid                          # valid time, from the `time` variable
+    d = Dates.format(t, "yyyymmddHH")    # figure name stamp = valid time
 
     for (z, k) in zip(plot_depths, k_depths)
         zstr = "$(z)m"

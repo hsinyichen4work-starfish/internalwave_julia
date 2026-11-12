@@ -27,6 +27,26 @@ function ncom_zgrid(zstt::AbstractArray{<:Real,3})
     return reverse(zs; dims = 1)
 end
 
+"""
+    parent_zgrid(pargrd, imin, jmin, li, lj, Np, tind) -> zs
+
+Parent level depths on the subgrid [imin:imin+li-1, jmin:jmin+lj-1] as
+(Np, eta, xi), negative downward, deepest first. A parent grid file with
+a 1-D `depth` variable (z-level parent, e.g. HYCOM glbz04) is used
+directly; otherwise the depths come from `layer_thickness` (NCOM) via
+ncom_zgrid.
+"""
+function parent_zgrid(pargrd, imin, jmin, li, lj, Np, tind)
+    has_depth = NCDataset(ds -> haskey(ds, "depth"), pargrd, "r")
+    if has_depth
+        depth = ncread(pargrd, "depth")
+        length(depth) == Np || error("parent_zgrid: $pargrd has $(length(depth)) depth levels but Np = $Np")
+        zs = repeat(reshape(-depth, Np, 1, 1), 1, lj, li)
+        return reverse(zs; dims = 1)
+    end
+    return ncom_zgrid(dropdims(ncread(pargrd, "layer_thickness", [imin, jmin, 1, tind], [li, lj, Np, 1]); dims = 4))
+end
+
 # ncread a (xi, eta[, time]) slab and return it as (eta, xi)
 _read2d(file, var, start, count) = permutedims(dropdims(ncread(file, var, start, count); dims = 3))
 _read2d_grid(file, var, start, count) = permutedims(ncread(file, var, start, count))
@@ -199,7 +219,7 @@ function h2r_make_ini(pargrd, par_tind, pariniu, pariniv, parinit, parinis, pari
         lats = latp[jmin:jmax, imin:imax]
 
         # Z-coordinate (3D) on minimal subgrid and child grid
-        zs = ncom_zgrid(dropdims(ncread(pargrd, "layer_thickness", [imin, jmin, 1, tind], [lpi, lpj, Np, 1]); dims = 4))
+        zs = parent_zgrid(pargrd, imin, jmin, lpi, lpj, Np, tind)
         zc, Cs_r = zlevs3(hc, hc .* 0, theta_s_c, theta_b_c, hc_c, N_c, "r", chdscoord)
         zw, Cs_w = zlevs3(hc, hc .* 0, theta_s_c, theta_b_c, hc_c, N_c, "w", chdscoord)
         _, Mc, Lc = size(zc)

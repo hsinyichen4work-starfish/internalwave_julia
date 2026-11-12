@@ -24,6 +24,7 @@ include("hv_coef.jl")         # get_hv_coef, apply_hv_coef
 include("inpaint_nans.jl")    # inpaint_nans, fillmissing_linear!
 include("ncom_flatfile.jl")   # read_ncom_flatfile, extract_ncom_name, read_ohgrd(_nc), read_ovgrdA, ovgrd_from_ohgrd_nc, avg_face_to_center, vel_rot
 include("ncom2nc.jl")         # make_bry_need_nc, make_frc_need_nc and the per-file converters
+include("hycom2nc.jl")        # make_bry_need_nc_hycom (HYCOM GOFS 3.5 glbz04 z-level NetCDF)
 include("easy_grid.jl")       # easy_grid, rot_sphere, tra_sphere, gc_dist, make_grid
 include("grid_tools.jl")      # gid_middle, grid_setting, bathy_interp, lsmooth_fun, make_roms_ncgrid, match_boundary_topo
 include("h2r_ini.jl")         # h2r_create_ini, h2r_make_ini, ncom_zgrid
@@ -40,6 +41,7 @@ export extract_ncom_name, read_ncom_flatfile, ncom_file_list, read_ohgrd, read_o
 export read_ohgrd_nc, ovgrd_from_ohgrd_nc
 export make_bry_need_nc, make_bry_need_grid, make_bry_need_ssh, make_bry_need_temp, make_bry_need_vel
 export make_frc_need_nc, make_frc_need_wind, make_frc_need_flux, make_frc_need_pres
+export make_bry_need_nc_hycom, hycom_valid_time, hycom_find_time, parent_zgrid
 export easy_grid, rot_sphere, tra_sphere, gc_dist, make_grid
 export gid_middle, midpoints, lonlat2xy, lonlat_rad2deg, grid_setting, read_topo_subset, bathy_interp
 export rfact, lsmooth_fun, make_roms_ncgrid, match_boundary_topo

@@ -122,7 +122,7 @@ function _bry_setup(pargrd, chdgrd, chdscd, Np, limits, bnd, masks)
     lats = _read2d_grid(pargrd, "Latitude", [imin, jmin], [li, lj])
 
     # Z-coordinate (3D) on minimal subgrid and child grid
-    zs = ncom_zgrid(dropdims(ncread(pargrd, "layer_thickness", [imin, jmin, 1, 1], [li, lj, Np, 1]); dims = 4))
+    zs = parent_zgrid(pargrd, imin, jmin, li, lj, Np, 1)
     zc, _ = zlevs3(hc, hc .* 0, chdscd.theta_s, chdscd.theta_b, chdscd.hc, chdscd.N, "r", chdscd.scoord)
     zw, _ = zlevs3(hc, hc .* 0, chdscd.theta_s, chdscd.theta_b, chdscd.hc, chdscd.N, "w", chdscd.scoord)
 
@@ -208,12 +208,12 @@ function h2r_bry_hv(pargrd, chdgrd, parinie, parinit, pariniu, Np, bry_filename,
             ncwrite(bry_filename, "$(svarh)_$side", permutedims(edge(fld)), [1, 1, tout])
         end
 
-        # Read in velocities one extra point to the west/south and average
-        # neighboring points back onto the subgrid
-        ud = _read3d_flipped(pariniu, "u_velocity", [imin - 1, jmin, 1, tind], [length(imin-1:imax), lj, Np, 1])
-        ur = 0.5 .* (ud[:, :, 1:end-1] .+ ud[:, :, 2:end])
-        vd = _read3d_flipped(pariniu, "v_velocity", [imin, jmin - 1, 1, tind], [li, length(jmin-1:jmax), Np, 1])
-        vr = 0.5 .* (vd[:, 1:end-1, :] .+ vd[:, 2:end, :])
+        # Read in velocities. The parent u/v are already at the cell centres
+        # (same points as T/S): HYCOM glbz04 stores them there and
+        # make_bry_need_vel averages the NCOM faces to centres. So read the
+        # tracer window with no face-to-centre averaging, as h2r_make_ini does.
+        ur = _read3d_flipped(pariniu, "u_velocity", [imin, jmin, 1, tind], [li, lj, Np, 1])
+        vr = _read3d_flipped(pariniu, "v_velocity", [imin, jmin, 1, tind], [li, lj, Np, 1])
 
         # 3d interpolation of us and vs to child grid
         ur[isnan.(ur)] .= 0

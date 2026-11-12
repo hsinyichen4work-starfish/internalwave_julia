@@ -64,24 +64,57 @@ function grd_build(cfg)
 end
 
 """
-    ini_build(cfg, pgrid, par_name)
+    parent_nc_files(cfg, par_name) -> (par_grd, parinie, parinit, pariniu)
 
-Build the initial file `initial_path/ini_name` from parent day `par_name`
-(time index 1), converting the NCOM flat files to NetCDF first if needed.
-`pgrid` is the parent grid Dict (only the number of levels in `zm3` is used).
+Make (if needed) the parent NetCDF files of parent cycle `par_name` in
+`cfg.nc_path_ini_bry` and return their names. `cfg.parent_datatype`
+picks the source: "NCOM" (default; flat files under `parent_data_path`)
+or "HYCOM" (GOFS 3.5 glbz04 NetCDF under `cfg.hycom_data_path`, subset
+to the child grid).
 """
-function ini_build(cfg, pgrid, par_name::AbstractString)
-    par_N = size(pgrid["zm3"], 3)   # number of parent vertical levels
-    par_tind = 1                    # frame number in parent file
-    remake = false
-    par_grd, parinie, parinit, pariniu = make_bry_need_nc(par_name, cfg.nc_path_ini_bry, remake;
-        parent_data_path = cfg.parent_data_path)
+function parent_nc_files(cfg, par_name::AbstractString; remake::Bool = false)
+    if uppercase(string(get(cfg, :parent_datatype, "NCOM"))) == "HYCOM"
+        return make_bry_need_nc_hycom(par_name, cfg.nc_path_ini_bry, remake; chdgrd = _chdgrd(cfg),
+            hycom_path = get(cfg, :hycom_data_path, HYCOM_DATA_PATH))
+    end
+    return make_bry_need_nc(par_name, cfg.nc_path_ini_bry, remake; parent_data_path = cfg.parent_data_path)
+end
+
+# number of parent vertical levels (NCOM layers / HYCOM z-levels), from the parent T/S file
+_parent_N(parent_TS) = ncsize(parent_TS, "layer_temperature")[3]
+
+"""
+    ini_build(cfg, pgrid, par_name; ini_time = nothing, par_tind = 1)
+
+Build the initial file `initial_path/ini_name` from parent cycle
+`par_name`, converting the parent data to NetCDF first if needed (see
+`parent_nc_files`). With `ini_time` (DateTime), the record is the one
+whose MT (valid time) equals it — an error if the cycle has none;
+otherwise record `par_tind` is used. `pgrid` is not used any more (the
+number of parent levels is read from the parent T/S file); it is kept so
+existing calls still work.
+"""
+function ini_build(cfg, pgrid, par_name::AbstractString; ini_time::Union{Nothing,DateTime} = nothing,
+                   par_tind::Integer = 1)
+    par_grd, parinie, parinit, pariniu = parent_nc_files(cfg, par_name)
 
     # Full file paths
     parent_UV = joinpath(cfg.nc_path_ini_bry, pariniu)
     parent_TS = joinpath(cfg.nc_path_ini_bry, parinit)
     parent_E = joinpath(cfg.nc_path_ini_bry, parinie)
     parent_G = joinpath(cfg.nc_path_ini_bry, par_grd)
+    par_N = _parent_N(parent_TS)   # number of parent vertical levels
+
+    # record from the valid times (MT, days since 1900-12-31) of the parent data
+    MT = ncread(parent_UV, "MT")
+    if ini_time !== nothing
+        target = datenum(ini_time) - _T1
+        k = findfirst(m -> abs(m - target) < 1 / 86_400, MT)
+        k === nothing && error("ini_build: parent cycle $par_name has no record valid at $ini_time")
+        par_tind = k
+    end
+    println("ini from parent cycle ", par_name, ", record ", par_tind, ", valid ",
+        Dates.format(_datenum2datetime(MT[par_tind] + _T1), "yyyy-mm-dd HH:MM"))
 
     chdgrd = _chdgrd(cfg)
     chdini = joinpath(cfg.initial_path, cfg.ini_name)
@@ -108,18 +141,16 @@ Dict to successive calls computes them only once. That is valid as long
 as the child grid and the (static) NCOM grid don't change between calls.
 """
 function bry_build(cfg, par_name::AbstractString, bry_filename::AbstractString; state::AbstractDict = Dict{Symbol,Any}())
-    println("read data from ", joinpath(cfg.parent_data_path, par_name))
+    println("parent ", get(cfg, :parent_datatype, "NCOM"), " cycle ", par_name)
     # make data nc file that can be read in boundary file
-    remake = false
-    par_grd, parinie, parinit, pariniu = make_bry_need_nc(par_name, cfg.nc_path_ini_bry, remake;
-        parent_data_path = cfg.parent_data_path)
+    par_grd, parinie, parinit, pariniu = parent_nc_files(cfg, par_name)
 
     # general parent/child grid setting
     parent_UV = joinpath(cfg.nc_path_ini_bry, pariniu)
     parent_TS = joinpath(cfg.nc_path_ini_bry, parinit)
     parent_E = joinpath(cfg.nc_path_ini_bry, parinie)
     parent_G = joinpath(cfg.nc_path_ini_bry, par_grd)
-    Np = ncsize(parent_G, "layer_thickness")[3]
+    Np = _parent_N(parent_TS)
 
     chdgrd = _chdgrd(cfg)
     chdscd = _chdscd(cfg)
