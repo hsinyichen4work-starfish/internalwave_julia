@@ -16,6 +16,9 @@ include("/home/hchen54/internalwave_julia/DFF/dff_fun.jl")   # waxis, wdir, dff_
 # The modes are orthogonal, (1/H) ∫ φm φn dz = δmn, so the depth-integrated flux has no cross-mode terms:
 # ∫ p'u' dz = Σn H pn un, and the "modesum" variables (Σ over n of each term) are the flux of modes 1..NMODE together.
 # One mode at a time (its 3 spectra + 3 filtered fields: ~40 GB for the 3-month run), so memory does not grow with NMODE.
+# Outputs: bcef_dff_flux_modes<N>.nc (time-mean maps per period); hourly along the three columns west / mooring / east
+# (bcef_dff_flux_modes<N>_transect_<line>_xi<ix>.nc); hourly mean across the ±STRIP_KM strip of mode_dff_binplot.jl
+# (bcef_dff_flux_modes<N>_transect_strip_xi<a>-<b>.nc, STRIP_KM default 200, a distance: its columns follow the grid).
 FFTW.set_num_threads(parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "4")))
 NMODE = parse(Int, get(ENV, "NMODE", "3"))
 bcef_dir = get(ENV, "BCEF_OUT", joinpath(run_dir, "ddf_bcef"))
@@ -38,8 +41,8 @@ H, cn = NCDataset(struct_fname) do ds
     Float32.(ds["h"][1:nx_f, 1:ny_f] .+ ds["zeta_mean"][1:nx_f, 1:ny_f]), Float32.(ds["c"][1:nx_f, 1:ny_f, :])
 end
 grid_fname = run_grid_fname   # from dff_run.jl
-lon_rho, lat_rho, land_mask = NCDataset(grid_fname) do ds
-    ds["lon_rho"][1:nx_f, 1:ny_f], ds["lat_rho"][1:nx_f, 1:ny_f], ds["mask_rho"][1:nx_f, 1:ny_f]
+lon_rho, lat_rho, land_mask, pm = NCDataset(grid_fname) do ds
+    ds["lon_rho"][1:nx_f, 1:ny_f], ds["lat_rho"][1:nx_f, 1:ny_f], ds["mask_rho"][1:nx_f, 1:ny_f], Float64.(ds["pm"][1:nx_f, 1:ny_f])
 end
 lon_rho[lon_rho .> 180] .-= 360
 println("$dff_run: $NMODE modes, pn, un, vn $nx x $ny x $nt -> trimmed to $nx_f x $ny_f, $(date[1]) -> $(date[end])")
@@ -84,6 +87,37 @@ println("periods: ", join(["$p $(date[t[1]]) -> $(date[t[end]])" for (p, t) in p
 # the three Hovmöller lines of the ssh analysis (grid columns cutting the domain into 4 along xi): the flux along them
 # is kept every hour
 tr_lines = [("west", round(Int, 0.5 + nx_f / 4)), ("mooring", round(Int, 0.5 + nx_f / 2)), ("east", round(Int, 0.5 + 3nx_f / 4))]
+
+# the strip of mode_dff_binplot.jl: ±STRIP_KM (default 200 km, a fixed distance: the number of grid columns follows the
+# grid spacing) around the mooring line, centred on the same column as mode_analysis.jl / mode_dff_binplot.jl. Its mean
+# flux per grid row is kept every hour (H pn un formed at each point, then averaged over the strip's water points
+# deeper than strip_hmin, so the shelf is left out); strip_cover = the share of the strip's columns in that mean.
+strip_km = parse(Float64, get(ENV, "STRIP_KM", "200"))
+strip_hmin = 200.0f0                                               # [m] shelf left out, as mode_dff_binplot.jl
+ix_strip_c = round(Int, 0.5 + (nx_f + 1) / 2)
+nside = round(Int, strip_km / (mean(1 ./ pm) / 1e3))
+strip_cols = max(1, ix_strip_c - nside):min(nx_f, ix_strip_c + nside)
+strip_ok = (land_mask[strip_cols, :] .> 0) .& (H[strip_cols, :] .>= strip_hmin)   # (strip column, eta)
+strip_n = vec(sum(strip_ok; dims = 1))                             # points averaged per row
+strip_cover = Float32.(strip_n ./ length(strip_cols))
+println("strip: ±$(strip_km) km = ±$nside columns around xi = $ix_strip_c -> xi = $(first(strip_cols))-$(last(strip_cols)); ",
+        "rows with any deep water: $(count(>(0), strip_n)) of $ny_f")
+# strip mean over the deep water points of H a b (a, b: (x, y, t)) per row and hour, without forming H a b over the
+# whole grid (one (eta, time) slice per column)
+# (the globals are passed as arguments, so the loop compiles to typed code)
+strip_mean(a, b) = strip_mean_k(a, b, H, strip_cols, strip_ok, strip_n)
+function strip_mean_k(a, b, H, cols, ok, n)
+    ny_, nt_ = size(a, 2), size(a, 3)
+    acc = zeros(Float32, ny_, nt_)
+    @inbounds for t in 1:nt_, j in 1:ny_               # inner loop along xi: contiguous in memory
+        s = 0f0
+        for (k, i) in enumerate(cols)
+            ok[k, j] && (s += H[i, j] * a[i, j, t] * b[i, j, t])
+        end
+        acc[j, t] = s / max(n[j], 1)                   # rows without deep water: 0 (cover = 0)
+    end
+    acc
+end
 
 # ============================================================================
 # (3) per mode: spectra of pn, un, vn; per band and sector: the fields of that direction -> flux -> means and lines
@@ -134,6 +168,8 @@ for n in 1:NMODE
                 Fline[(m, b, sec, "Fx", l)] = H[ix, :] .* p[ix, :, :] .* u[ix, :, :]
                 Fline[(m, b, sec, "Fy", l)] = H[ix, :] .* p[ix, :, :] .* v[ix, :, :]
             end
+            Fline[(m, b, sec, "Fx", "strip")] = strip_mean(p, u)   # strip mean, every hour (eta, time)
+            Fline[(m, b, sec, "Fy", "strip")] = strip_mean(p, v)
             println("mode $n $b $sec: domain-mean flux (full record) Fx $(round(mean(Fx[:, :, 1]), sigdigits = 3)), ",
                     "Fy $(round(mean(Fy[:, :, 1]), sigdigits = 3)) W/m; p$n std $(round(std(p), sigdigits = 3)) Pa")
             pcheck[sec] = p[ixc, iyc, :]
@@ -160,7 +196,7 @@ mode_tags = [mtag.(1:NMODE); "modesum"]
 for (b, _, _) in bands, sec in [first.(sectors); "cross"], c in ("Fx", "Fy")
     Fmean[("modesum", b, sec, c)] = sum(Fmean[(mtag(n), b, sec, c)] for n in 1:NMODE)
 end
-for (b, _, _) in bands, sec in first.(sectors), c in ("Fx", "Fy"), (l, _) in tr_lines
+for (b, _, _) in bands, sec in first.(sectors), c in ("Fx", "Fy"), l in [first.(tr_lines); "strip"]
     Fline[("modesum", b, sec, c, l)] = sum(Fline[(mtag(n), b, sec, c, l)] for n in 1:NMODE)
 end
 println("\nM2 deep-ocean (H > 1000 m) mean |F| of the full record, all directions:")
@@ -211,6 +247,27 @@ for (l, ix) in tr_lines
                    attrib = ["long_name" => "$(mode_desc(m)) energy flux along grid $(c == "Fx" ? "xi" : "eta"), $bdesc, $sec", "units" => "W m-1"])
         end
         ds.attrib["line"] = "$l line, grid column xi = $ix (Julia 1-based, trimmed DFF grid)"
+    end
+    println("wrote $fname")
+end
+
+# the strip mean every hour, one file (as the transects): <Fx|Fy>_<band>_<sector>_<mode> (eta, time)
+let fname = joinpath(bcef_dir, "bcef_dff_flux_modes$(NMODE)_transect_strip_xi$(first(strip_cols))-$(last(strip_cols)).nc")
+    isfile(fname) && rm(fname)
+    NCDataset(fname, "c") do ds
+        defDim(ds, "eta_rho", ny_f); defDim(ds, "time", nt)
+        defVar(ds, "ocean_time", date, ("time",); attrib = ["units" => "seconds since 1994-01-01 00:00:00"])
+        defVar(ds, "H", H[ix_strip_c, :], ("eta_rho",); attrib = ["units" => "meter", "long_name" => "h + mean zeta on the centre column"])
+        defVar(ds, "lat_rho", lat_rho[ix_strip_c, :], ("eta_rho",); attrib = ["units" => "degree_north", "long_name" => "on the centre column"])
+        defVar(ds, "strip_cover", strip_cover, ("eta_rho",);
+               attrib = ["long_name" => "share of the strip columns in the mean (water deeper than $(Int(strip_hmin)) m); 0: row not averaged"])
+        for m in mode_tags, (b, _, bdesc) in bands, sec in first.(sectors), c in ("Fx", "Fy")
+            defVar(ds, "$(c)_$(b)_$(sec)_$(m)", Fline[(m, b, sec, c, "strip")], ("eta_rho", "time");
+                   attrib = ["long_name" => "$(mode_desc(m)) energy flux along grid $(c == "Fx" ? "xi" : "eta"), $bdesc, $sec, mean across the strip",
+                             "units" => "W m-1"])
+        end
+        ds.attrib["line"] = "strip: ±$(strip_km) km = ±$nside grid columns around xi = $ix_strip_c, xi = $(first(strip_cols))-$(last(strip_cols)) (Julia 1-based, trimmed DFF grid)"
+        ds.attrib["method"] = "H pn (un, vn) at each point of a direction, averaged per row over the strip's water points deeper than $(Int(strip_hmin)) m (centre column as mode_dff_binplot.jl)"
     end
     println("wrote $fname")
 end

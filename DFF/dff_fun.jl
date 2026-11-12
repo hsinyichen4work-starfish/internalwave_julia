@@ -31,3 +31,12 @@ function dff_spectrum(var)
     fft!(a, (1, 2))
     fftshift(a, (1, 2))
 end
+
+# DFF of one harmonic constituent: Z = A e^{-ig} (x, y) is the complex amplitude of A cos(ω(t - tc) - g), i.e. the
+# positive-frequency slice of the time-series DFF (the fit has done the time filter). Same wavenumber layout and θ
+# (waxis, wdir) as dff_sector; mask [kx, ky] true = keep. Returns the complex amplitude of that direction
+# (A_sec = |Z_sec|, g_sec = -angle(Z_sec)); land (land_mask == 0) NaN. Z must be 0 (not NaN) on land; nx, ny odd.
+function dff_sector_harm(Z, mask, land_mask)
+    out = ifft(ifftshift(fftshift(fft(Z)) .* mask))
+    ifelse.(land_mask .== 0, complex(NaN, NaN), out)
+end
