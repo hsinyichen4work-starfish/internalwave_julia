@@ -306,3 +306,119 @@ function dbry_make(cfg)
     println("done -- $nfiles daily flux nc files written to $flux_out_path")
     save_mat && println("done -- $nfiles daily MAT files written to $daily_mat_path")
 end
+
+# ---------------------------------------------------------------------------
+# Generic version for boundary files that are not "one file per day with the
+# same number of records" -- e.g. the HYCOM bry files: one per 12Z cycle,
+# 3-hourly, 9 records (t0000..t0024) or 8 (t0000..t0021), the t0024 record
+# repeating the next cycle's t0000. The records of all files are joined into
+# one time series (a repeated time is read once), which must be evenly
+# spaced. One flux file (and MAT file) is written per bry file, holding
+# exactly the bry_time records of that bry file.
+
+"""
+    read_window_files(files) -> (time, win)
+
+Like read_padded_window, for an explicit list of bry files: records whose
+bry_time is not later than the last one already read are skipped.
+"""
+function read_window_files(files)
+    time = Float64[]
+    names = (ssh = "zeta", temp = "temp", salt = "salt", u = "u", v = "v")
+    parts = Dict(d => Dict(String(k) => Array{Float64}[] for k in keys(names)) for d in DBRY_DIRS)
+    for fn in files
+        NCDataset(fn) do ds
+            t = ncfloat(ds, "bry_time")
+            keep = isempty(time) ? collect(eachindex(t)) : findall(>(time[end] + 1e-6), t)
+            append!(time, t[keep])
+            for d in DBRY_DIRS, (k, ncname) in pairs(names)
+                a = ncfloat(ds, "$(ncname)_$(d)")
+                push!(parts[d][String(k)], collect(selectdim(a, ndims(a), keep)))
+            end
+        end
+    end
+    win = Dict(d => Dict(k => cat(v...; dims = ndims(v[1])) for (k, v) in parts[d]) for d in DBRY_DIRS)
+    return time, win
+end
+
+_tidx(time, t) = (i = findfirst(x -> abs(x - t) < 1e-6, time); i === nothing ? error("time $t not in window") : i)
+
+"""
+    dbry_make_files(cfg)
+
+cfg fields: child_grid_file, bry_files (sorted, consecutive), flux_out_path,
+daily_mat_path, cutoff_days, N_butter, rho0, chunk_files, pad_files,
+save_mat, t1, dx, and the name functions flux_name(bry_file) and
+mat_name(bry_file). Chunks of `chunk_files` bry files are computed, each
+read with `pad_files` extra files on both sides. A time shared by two bry
+files gets the value computed for the earlier file.
+"""
+function dbry_make_files(cfg)
+    (; child_grid_file, bry_files, flux_out_path, daily_mat_path, cutoff_days, N_butter,
+        rho0, chunk_files, pad_files, save_mat, t1, flux_name, mat_name) = cfg
+    to_date(t) = t1 + Millisecond(round(Int, t * 86_400_000))
+
+    geo = dbry_geo(child_grid_file)
+    nfiles = length(bry_files)
+    ftimes = [NCDataset(f -> ncfloat(f, "bry_time"), fn) for fn in bry_files]
+    vert = NCDataset(bry_files[1]) do ds
+        (theta_s = ncfloat(ds, "theta_s")[1], theta_b = ncfloat(ds, "theta_b")[1],
+            hc = ncfloat(ds, "hc")[1], nz = ds.dim["s_rho"])
+    end
+
+    # the joined series must be evenly spaced
+    alltime = Float64[]
+    for t in ftimes, x in t
+        (isempty(alltime) || x > alltime[end] + 1e-6) && push!(alltime, x)
+    end
+    steps = diff(alltime)
+    dt = steps[1]
+    all(s -> abs(s - dt) < 1e-6, steps) ||
+        error("bry_time is not evenly spaced: steps (h) " * string(unique(round.(steps .* 24; digits = 3))))
+    chunk_starts = 1:chunk_files:nfiles
+    @printf("nz=%d, %d bry files, %d records %s to %s every %.2f h, %d chunk(s), %d thread(s)\n",
+        vert.nz, nfiles, length(alltime), to_date(alltime[1]), to_date(alltime[end]), dt * 24,
+        length(chunk_starts), Threads.nthreads())
+
+    mkpath(flux_out_path)
+    save_mat && mkpath(daily_mat_path)
+    carry = Dict{String,Any}()   # values at the last time of the previous chunk
+    carry_t = NaN
+
+    for (ci, c_start) in enumerate(chunk_starts)
+        c_end = min(c_start + chunk_files - 1, nfiles)
+        p_start = max(1, c_start - pad_files)
+        p_end = min(nfiles, c_end + pad_files)
+        @printf("chunk %d/%d: output files %d-%d (%s .. %s), read files %d-%d\n", ci, length(chunk_starts),
+            c_start, c_end, basename(bry_files[c_start]), basename(bry_files[c_end]), p_start, p_end)
+
+        time, win = read_window_files(bry_files[p_start:p_end])
+        cols = _tidx(time, ftimes[c_start][1]):_tidx(time, ftimes[c_end][end])
+        chunk_time = time[cols]
+
+        out = Dict{String,Any}()
+        for d in DBRY_DIRS
+            o = process_direction(d, time, win[d], geo[d], vert, cutoff_days, N_butter, cols)
+            for k in (DBRY_SMALL..., DBRY_BIG...)
+                a = o[k]
+                if ci > 1 && abs(chunk_time[1] - carry_t) < 1e-6   # shared time: keep earlier chunk's value
+                    selectdim(a, ndims(a), 1) .= carry[d][k]
+                end
+                haskey(carry, d) || (carry[d] = Dict{String,Any}())
+                carry[d][k] = collect(selectdim(a, ndims(a), size(a, ndims(a))))
+            end
+            out[d] = o
+        end
+        carry_t = chunk_time[end]
+        win = nothing
+
+        for f in c_start:c_end
+            fcols = [_tidx(chunk_time, t) for t in ftimes[f]]
+            write_flux_nc(joinpath(flux_out_path, flux_name(bry_files[f])), ftimes[f], out, fcols, rho0)
+            save_mat && write_daily_mat(joinpath(daily_mat_path, mat_name(bry_files[f])), ftimes[f], out, fcols, geo, cfg)
+        end
+        println("  wrote ", c_end - c_start + 1, " files (flux time ", to_date(chunk_time[1]), " to ", to_date(chunk_time[end]), ")")
+    end
+    println("done -- $nfiles flux nc files written to $flux_out_path")
+    save_mat && println("done -- $nfiles MAT files written to $daily_mat_path")
+end

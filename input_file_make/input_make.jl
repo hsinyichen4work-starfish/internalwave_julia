@@ -38,7 +38,7 @@ dating = Date(2022, 8, 22):Day(1):Date(2022, 11, 30)
 ## path settings
 parent_data_path = "/home/mbui/ModelOutput/NCOM/data/"
 hycom_data_path = "/home/mbui/ModelOutput/NCOM/HYCOM_data/subset/"
-par_name = "2022080200"; ini_par_path = parent_data_path * par_name
+par_name = "2022082200"; ini_par_path = parent_data_path * par_name
 # intermediate parent NetCDF files. NCOM (also used by the forcing step):
 nc_path_ncom = "/home/hsinyi/roms_data/NCOM_DATA_NC_2700/"
 nc_path_frc = nc_path_ncom
