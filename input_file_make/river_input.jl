@@ -26,8 +26,8 @@ using Statistics
 ## settings
 dx = 2700
 river_file = "/home/hsinyi/roms_data/riverfile/coastal-stns-Vol-monthly.updated-May2019.nc"
-grid_src   = "/home/hsinyi/roms_data/grid/new_design/roms_grd_$(dx)m_1104_before_riverfix.nc"  # untouched input
-grid_out   = "/home/hsinyi/roms_data/grid/new_design/roms_grd_$(dx)m_1104.nc"   # rebuilt: new mask_rho + river_flux
+grid_src   = "/home/hsinyi/roms_data/new_design/roms_grd_$(dx)m_1104_before_riverfix.nc"  # untouched input
+grid_out   = "/home/hsinyi/roms_data/new_design/roms_grd_$(dx)m_1104.nc"   # rebuilt: new mask_rho + river_flux
 grid_file  = grid_src
 isfile(grid_src) || error("missing $grid_src: copy the original roms_grd_$(dx)m_1104.nc there first")
 frc_out    = "/home/hsinyi/roms_data/riverfile/roms_riv_$(dx)m_1104.nc"
@@ -449,7 +449,7 @@ write_river_frc(frc_out, q_clim, names; riv_temp, riv_salt); println("wrote ", f
 
 ## figure: grid land mask + coastline, river source cells coloured by flux per cell
 fig_out = "/home/hsinyi/roms_data/riverfile/river_sources_$(dx)m_1104.png"
-child_grid = "/home/hsinyi/roms_data/grid/new_design/roms_grd_900m_1104.nc"   # outline drawn on the figure (nothing = skip)
+child_grid = "/home/hsinyi/roms_data/new_design/roms_grd_900m_1104.nc"   # outline drawn on the figure (nothing = skip)
 
 using CairoMakie
 # closed outline of a curvilinear grid (outer rho points)

@@ -202,6 +202,7 @@ function lsmooth_fun(gridfile::AbstractString, rmax::Real, hmin::Real, offset::R
 
     println("iter   max(r)")
     iter_max = 200
+    rt = Inf
     for iter in 1:iter_max
         Op1 = op.(hl[2:end, 2:end-1] .- hl[1:end-1, 2:end-1])
         Op2 = op.(hl[2:end-1, 2:end] .- hl[2:end-1, 1:end-1])
@@ -225,6 +226,10 @@ function lsmooth_fun(gridfile::AbstractString, rmax::Real, hmin::Real, offset::R
         println(" ", iter, "   ", num2str(rt))
         rt < rmax && break
     end
+    rt < rmax || @warn "lsmooth_fun: rx0 = $(num2str(rt)) after $iter_max iterations, still above rmax = $rmax"
+    # with offset > 0 the written h goes down to hmin - offset (can be < 0) and
+    # the rx0 checked above is that of h + offset, not of the written h
+    offset > 0 && @warn "lsmooth_fun: offset = $offset, so min(h) = $(hmin - offset) and the real rx0 is larger than $(num2str(rt))"
 
     println("writing lsmoothed h to: ", gridfile)
     h = h .- offset

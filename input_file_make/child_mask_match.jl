@@ -15,7 +15,7 @@ using NearestNeighbors
 using Dates
 
 ## settings
-d = "/home/hsinyi/roms_data/grid/new_design/"
+d = "/home/hsinyi/roms_data/new_design/"
 parent_old = d * "roms_grd_2700m_1104_before_riverfix.nc"   # parent before the river fix
 parent_new = d * "roms_grd_2700m_1104.nc"                   # parent after the river fix
 child_src  = d * "roms_grd_900m_1104_before_riverfix.nc"    # untouched child (input)
