@@ -5,19 +5,19 @@ include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
 # Same maps as HYCOM_data.jl / time_capture_NCOM.jl / time_capture_CMEMS.jl
 # (SSH, SSH gradient, temperature, salinity, current speed, with velocity arrows,
-# grid outlines and moorings), but from our ROMS 2700m CMEMS run on Expanse, at
+# grid outlines and moorings), but from our ROMS 2700m CMEMS run (amazon_2700m_cmems_0801) on Expanse, at
 # every HYCOM time that the ROMS history files also cover.
 
 ## path setting
 proj = "/expanse/lustre/projects/uso102/hchen54/"
-run_fold = "amazon_2700m_cmems_3mon"
+run_fold = "amazon_2700m_cmems_0801"   # 2022-08-01 -> 11-30, 55-point sponge (was amazon_2700m_cmems_3mon)
 datadir = proj * run_fold * "/after_joint/"   # roms_his.<yyyymmddHH>0000.nc, 4 hourly records each
 grid_fname = proj * "input/grid/roms_cmems_grd_2700m.nc"            # ROMS 2700m grid — data grid
 child_grid = proj * "input/grid/roms_grd_900m.nc"                   # ROMS 900m grid — boundary line
 parent_grid = proj * "input/grid/ohgrd_2.nc"   # NCOM 900m grid — boundary line + map extent (copy it from the USM
                                                # server, /home/mbui/ModelOutput/NCOM/grid/; without it the ROMS 2700m extent is used)
 mooring_loc = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc"   # mooring locations in its global attributes
-figure_path = proj * "figure/20261016_hycomdata/ROMS_2700m"   # same file names as the HYCOM figures
+figure_path = proj * "figure/20261016_hycomdata/ROMS_2700m_0801"   # same file names as the HYCOM figures; own folder so the 3mon run's ROMS_2700m figures are kept
 mkpath(figure_path)
 colorbar_file = proj * "data_upload/colorbar_nc.nc"   # HYCOM color ranges, written by HYCOM_data.jl
 

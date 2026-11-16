@@ -53,8 +53,8 @@ run_mooring = Dict("amazon_2700m_cmems_0801" => "roms_cmems_grd_2700m_mor_edata.
 mooring_file = "/expanse/lustre/projects/uso102/hchen54/input/grid/$(get(run_mooring, dff_run, "roms_grd_900m_mor_edata.nc"))"
 
 h_mask  = 200.0                                           # [m] shelf not drawn
-# steps to run after (1): BIN_STEPS=3 or 3:4 (default all: 2,3,4,5,6,7,8,9,10,11,12; ":" also works in sbatch --export)
-bin_steps = parse.(Int, split(get(ENV, "BIN_STEPS", "2,3,4,5,6,7,8,9,10,11,12"), r"[,:; ]+"; keepempty = false))
+# steps to run after (1): BIN_STEPS=3 or 3:4 (default all: 2,3,4,5,6,7,8,9,10,11,12,13,14; ":" also works in sbatch --export)
+bin_steps = parse.(Int, split(get(ENV, "BIN_STEPS", "2,3,4,5,6,7,8,9,10,11,12,13,14"), r"[,:; ]+"; keepempty = false))
 edge_km = parse(Float64, get(ENV, "EDGE_KM", "54"))       # [km] edge bands (sponge / boundary), as mode_analysis.jl
 
 # --- the DFF grid (cropped to odd sizes); every field below is cropped to it
@@ -905,4 +905,152 @@ if 12 in bin_steps
                 b, m, mean(Fmag["all"][ok]), mean(Fmag["north"][ok]), mean(Fmag["south"][ok]), mean(Fmag["cross"][ok]), median(filter(isfinite, ratio[ok])))
         println("saved $fname")
     end
+end
+
+# ============================================================================
+# (13) mean flow against the wave speed: |U_n| / c_n, averaged across the strip
+# ============================================================================
+# U_n = (u_n, v_n) mean: the constant term of the harmonic fit (u<n>_mean, v<n>_mean), i.e. the time-mean flow projected
+# on mode n (the decomposition removes only the depth mean, not the time mean; (1/H) ∫ φn² dz = 1, so U_n is a
+# depth-RMS velocity). |U_n| / c_n: modal Froude number, how strongly the mean flow can Doppler-shift / refract mode n
+# (≪ 1: weak; → 1: the wave is blocked). Not per constituent. One row per mode: map of |U_n| / c_n with the mean-flow
+# arrows, and its strip mean ± 1 std; dashed: the surface mean flow |ū_surf| / c_n of the same window when
+# mean_flow_month.nc (mean_flow_month.jl) is there. Figure: BIN13_FIG (default ~/figure_check)/binplot_Un_over_cn.png
+if 13 in bin_steps
+    fig13_path = expanduser(get(ENV, "BIN13_FIG", "~/figure_check")); mkpath(fig13_path)
+    mf_fname = joinpath(bcef_dir, "mean_flow_month.nc")
+    Us = isfile(mf_fname) ? NCDataset(d -> hypot.(Float64.(d["u_surf"][1:nx, 1:ny, 1]), Float64.(d["v_surf"][1:nx, 1:ny, 1])), mf_fname) : nothing
+    println("\n|U_n|/c_n: U_n from the fit's mean term ($harm_fname); surface mean flow: ", Us === nothing ? "no $mf_fname yet" : mf_fname)
+    nm = length(harm_modes)
+    fig = Figure(size = (fig_w, 800nm), fontsize = 10pt)
+    axl = Axis[]
+    skip = max(1, round(Int, 45 / dx_km))
+    for (row, n) in enumerate(harm_modes)
+        un = Float64.(nomissing(dsh["u$(n)_mean"][1:nx, 1:ny], NaN)); vn = Float64.(nomissing(dsh["v$(n)_mean"][1:nx, 1:ny], NaN))
+        cn = c_mode[:, :, n]
+        R = hypot.(un, vn) ./ cn
+        lim = round(quantile(filter(isfinite, masked(R)), 0.99); sigdigits = 2)
+        ax = strip_map!(fig, row, R, "|U_$n| / c_$n, mode $n"; colormap = :viridis, colorrange = (0, lim), last_row = row == nm)
+        Ue = un .* cos.(angle) .- vn .* sin.(angle); Vn = un .* sin.(angle) .+ vn .* cos.(angle)
+        umax = quantile(filter(isfinite, masked(hypot.(un, vn))), 0.99)
+        quiver_curvilinear!(ax, lon180, lat, masked(Ue), masked(Vn); skip = skip, lengthscale = 0.8 / umax,
+                            color = (:white, 0.8), shaftwidth = 0.6, tipwidth = 3, tiplength = 3)
+        Rm, Rs, _ = strip_stats(R)
+        ok = rows_ok(Rm)
+        Sm = Us === nothing ? fill(NaN, ny) : strip_stats(Us ./ cn)[1]
+        al = strip_line!(fig, row, "|U_$n| / c_$n averaged across the strip (±$(round(Int, side_km)) km, ξ = $(ix_west)–$(ix_east))",
+                         "|U_$n| / c_$n", vcat((Rm .+ Rs)[ok], Sm[ok]); last_row = row == nm, ymin0 = true)
+        push!(axl, al)
+        band!(al, line_km, max.(Rm .- Rs, 0), Rm .+ Rs; color = (:seagreen, 0.18), label = "|U_n| / c_n ± 1 std across the strip")
+        Us === nothing || lines!(al, line_km, Sm; color = :gray30, linestyle = :dash, linewidth = 1.8,
+                                 label = "|ū_surf| / c_n (surface mean flow, mean_flow_month.jl), strip mean")
+        lines!(al, line_km, Rm; color = :seagreen, linewidth = 2.5, label = "|U_n| / c_n (mean flow on mode n), strip mean")
+        finish_line!(al, ok)
+        Um, _, _ = strip_stats(hypot.(un, vn)); Cm, _, _ = strip_stats(cn)
+        @printf("  mode %d: strip mean |U_n|/c_n %.3f (max %.3f at %.0f km); at the node %.3f (|U_n| %.3f m/s, c_n %.2f m/s)%s\n",
+                n, mean(Rm[ok]), maximum(Rm[ok]), line_km[ok][argmax(Rm[ok])], Rm[j_node], Um[j_node], Cm[j_node],
+                Us === nothing ? "" : @sprintf("; surface |ū|/c_n at the node %.3f", Sm[j_node]))
+    end
+    Label(fig[0, :], "Mean flow / mode speed |U_n| / c_n, mean across ±$(round(Int, side_km)) km of the mooring line, $dff_run";
+          fontsize = 11pt, font = :bold)
+    Legend(fig[nm + 1, :], axl[end]; orientation = :horizontal, framevisible = false, labelsize = 9pt, nbanks = 2)
+    Label(fig[nm + 2, :], strip_note * "\nU_n: time mean (window of the fit) of the mode-n velocity amplitude, (1/H)∫φ²dz = 1; arrows: U_n east / north"; fontsize = 8pt)
+    resize_to_layout!(fig)
+    fname = joinpath(fig13_path, "binplot_Un_over_cn.png")
+    save(fname, fig; px_per_unit = 2); fig = nothing; GC.gc()
+    println("saved $fname")
+end
+
+# ============================================================================
+# (14) DFF of the time series: time-mean KE and APE by direction, averaged across the strip
+# ============================================================================
+# bcef_dff_energy_modes<N>.nc (DFF_energy_on_bcef.jl; the *_test.nc file when only that is there): KE_n = ½ρ0H<un²+vn²>,
+# APE_n = H<pn²>/(2ρ0cn²) of the north / south going parts and cross = all - north - south (the N-S interference: a
+# partly standing wave). Three panels along the mooring line: (1) KE, (2) APE (all / north ± 1 std across the strip /
+# south / cross), (3) bathymetry. Check: the time mean of the hourly strip file = the strip mean of the time-mean map.
+# Bands / modes: DFF_BIN_BANDS, DFF_BIN_MODES as step 12. Figures: DFF14_FIG (default ~/figure_check)/binplot_dffE_<band>_<mode>.png
+if 14 in bin_steps
+    e_fname = joinpath(bcef_dir, "bcef_dff_energy_modes$(NMODE).nc")
+    isfile(e_fname) || (e_fname = joinpath(bcef_dir, "bcef_dff_energy_modes$(NMODE)_test.nc"))
+    isfile(e_fname) || error("no bcef_dff_energy_modes$(NMODE)[_test].nc in $bcef_dir: run DFF_energy_on_bcef.jl first")
+    es_file = filter(f -> occursin(Regex("bcef_dff_energy_modes$(NMODE)_strip_xi$(ix_west)-$(ix_east)" *
+                                         (endswith(e_fname, "_test.nc") ? "_test" : "") * "\\.nc"), f), readdir(bcef_dir))
+    fig14_path = expanduser(get(ENV, "DFF14_FIG", "~/figure_check")); mkpath(fig14_path)
+    dse = NCDataset(e_fname)
+    e_vars = filter(k -> startswith(k, "KE_"), collect(keys(dse)))
+    e_bands = unique([split(k, "_")[2] for k in e_vars]); e_modes = unique([split(k, "_")[4] for k in e_vars])
+    bsel = dff_bin_env == "all" ? String.(e_bands) : dff_bin_bands
+    msel = dff_mode_env == "all" ? String.(e_modes) : dff_bin_modes
+    hm_, hs_, hmin, hmax, shelf, line_h = strip_bathy()
+    println("\nDFF of the time series, KE / APE across the strip ($e_fname)")
+    for b in bsel, m in msel
+        haskey(dse, "KE_$(b)_all_$(m)") || (println("  $b $m not in $e_fname"); continue)
+        rde(e, sec) = Float64.(nomissing(dse["$(e)_$(b)_$(sec)_$(m)"][:, :, 1], NaN)) ./ 1e3   # full record [kJ m-2]
+        secs = ["all", "north", "south", "cross"]
+        S = Dict((e, sec) => strip_stats(rde(e, sec)) for e in ("KE", "APE"), sec in secs)
+        ok = rows_ok(S[("KE", "all")][1])
+        if !isempty(es_file)
+            for e in ("KE", "APE")
+                Eh = NCDataset(d -> vec(mean(Float64.(d["$(e)_$(b)_all_$(m)"][:, :]); dims = 2)), joinpath(bcef_dir, es_file[1])) ./ 1e3
+                sn = NCDataset(d -> Float64.(d["strip_n"][:]), joinpath(bcef_dir, es_file[1]))
+                ck = ok .& (sn .> 0)
+                @printf("  %s %s %s check: time mean of the hourly strip file vs strip mean of the map: max |diff| %.2e kJ/m² (max %.2f)\n",
+                        b, m, e, maximum(abs.(Eh[ck] .- S[(e, "all")][1][ck])), maximum(abs.(S[(e, "all")][1][ck])))
+            end
+        end
+        x0, x1 = line_km[findfirst(ok)], line_km[j_crop]
+        fig = Figure(size = (fig_w, 1300), fontsize = 10pt)
+        W = 930
+        f(a) = ifelse.(ok, a, NaN)
+        axs = Axis[]; ytops = Float64[]
+        for (row, e, ttl) in ((1, "KE", "(1) time-mean KE = ½ρ₀H⟨u²+v²⟩, mean across the strip"),
+                              (2, "APE", "(2) time-mean APE = H⟨p²⟩/(2ρ₀c²), mean across the strip"))
+            ax = Axis(fig[row, 1]; title = ttl, ylabel = "$e [kJ m⁻²]", xticks = 0:50:ceil(Int, line_km[end]), width = W, height = 330)
+            mN, sN = S[(e, "north")][1], S[(e, "north")][2]
+            band!(ax, line_km, f(max.(mN .- sN, 0)), f(mN .+ sN); color = (dff_col["north"], 0.15), label = "north ± 1 std across the strip")
+            lines!(ax, line_km, f(S[(e, "cross")][1]); color = dff_col["cross"], linestyle = :dash, linewidth = 1.8, label = "cross terms (all − N − S)")
+            lines!(ax, line_km, f(S[(e, "south")][1]); color = dff_col["south"], linewidth = 2.2, label = "south going (180–360°)")
+            lines!(ax, line_km, f(mN); color = dff_col["north"], linewidth = 2.2, label = "north going (0–180°)")
+            lines!(ax, line_km, f(S[(e, "all")][1]); color = dff_col["all"], linewidth = 2.5, label = "all directions")
+            hlines!(ax, [0]; color = :black, linewidth = 0.6)
+            v = filter(isfinite, vcat(f(mN .+ sN), f(S[(e, "cross")][1]), f(S[(e, "all")][1])))
+            ylo, yhi = min(minimum(v), 0.0), maximum(v)
+            ylims!(ax, ylo - 0.05 * (yhi - ylo), yhi + 0.3 * (yhi - ylo))
+            push!(axs, ax); push!(ytops, yhi + 0.3 * (yhi - ylo))
+        end
+        a3 = Axis(fig[3, 1]; title = "(3) bathymetry", ylabel = "depth [m]", xlabel = "distance along the mooring line from the south boundary [km]",
+                  xticks = 0:50:ceil(Int, line_km[end]), width = W, height = 200)
+        band!(a3, line_km, -(hm_ .+ hs_), -(hm_ .- hs_); color = (:royalblue, 0.25), label = "strip mean ± 1 std")
+        lines!(a3, line_km, -hm_; color = :royalblue, linewidth = 2, label = "strip mean")
+        lines!(a3, line_km, -line_h; color = :black, linewidth = 1.8, label = "mooring line")
+        ylims!(a3, -maximum(filter(isfinite, hmax[ok])) * 1.05, 0)
+        for ax in (axs..., a3)
+            for (nm, j, on) in moor_in
+                on || continue
+                vlines!(ax, [line_km[j]]; color = :gray70, linewidth = 0.6)
+                ax === axs[1] && text!(ax, line_km[j], ytops[1]; text = nm * " ",
+                                       rotation = π / 2, align = (:right, :center), fontsize = 7pt, color = :gray35)
+            end
+            vlines!(ax, [line_km[j_node]]; color = :red, linestyle = :dash, linewidth = 1.2)
+            xlims!(ax, x0, x1)
+        end
+        hidexdecorations!(axs[1]; grid = false, ticks = false); hidexdecorations!(axs[2]; grid = false, ticks = false)
+        Legend(fig[1:2, 2], axs[1]; framevisible = false, labelsize = 8pt, halign = :left, tellheight = false)
+        Legend(fig[3, 2], a3; framevisible = false, labelsize = 8pt, halign = :left, tellheight = false)
+        mlabel = m == "modesum" ? "modes 1-$(NMODE) (sum)" : "mode-$(replace(m, "mode" => ""))"
+        Label(fig[0, 1:2], "$mlabel KE and APE, $(get(band_desc, b, b)), mean across ±$(round(Int, side_km)) km of the mooring line\n" *
+              "DFF north 0–180° / south 180–360° (grid); $dff_run, $(replace(split(split(dse.attrib["periods"], ";")[1], "= ")[end], "T00:00:00" => ""))";
+              fontsize = 11pt, font = :bold)
+        Label(fig[4, 1:2], strip_note; fontsize = 8pt)
+        rowgap!(fig.layout, 8)
+        resize_to_layout!(fig)
+        fname = joinpath(fig14_path, "binplot_dffE_$(b)_$(m).png")
+        save(fname, fig; px_per_unit = 2); fig = nothing; GC.gc()
+        for e in ("KE", "APE")
+            @printf("  %s %s %s strip mean (to the crop): all %.3f, north %.3f, south %.3f, cross %.3f kJ/m²; at the node all %.3f, north %.3f, cross %.3f\n",
+                    b, m, e, (mean(S[(e, s)][1][ok]) for s in secs)..., S[(e, "all")][1][j_node], S[(e, "north")][1][j_node], S[(e, "cross")][1][j_node])
+        end
+        println("saved $fname")
+    end
+    close(dse)
 end
