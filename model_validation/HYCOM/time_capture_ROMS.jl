@@ -1,4 +1,4 @@
-using NCDatasets, CairoMakie, Dates, Statistics
+using NCDatasets, CairoMakie, Dates, Statistics, Printf
 CairoMakie.activate!()
 include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
 include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
@@ -8,17 +8,38 @@ include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 # grid outlines and moorings), but from our ROMS 2700m CMEMS run (amazon_2700m_cmems_0801) on Expanse, at
 # every HYCOM time that the ROMS history files also cover.
 
-## path setting
+## path setting — pick the run with CAPTURE_RUN=... (default cmems_0801)
 proj = "/expanse/lustre/projects/uso102/hchen54/"
-run_fold = "amazon_2700m_cmems_0801"   # 2022-08-01 -> 11-30, 55-point sponge (was amazon_2700m_cmems_3mon)
+capture_run = get(ENV, "CAPTURE_RUN", "cmems_0801")
+cfg = Dict(
+    # 2022-08-01 -> 11-30, 55-point sponge (was amazon_2700m_cmems_3mon)
+    "cmems_0801" => (run_fold = "amazon_2700m_cmems_0801",
+                     grid = proj * "input/grid/roms_cmems_grd_2700m.nc",
+                     child = proj * "input/grid/roms_grd_900m.nc",
+                     moor = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc",
+                     fig = "ROMS_2700m_0801"),   # own folder so the 3mon run's ROMS_2700m figures are kept
+    # new design 1104 grid, HYCOM bry + NCOM forcing, dynamic bry, rivers, 2022-08-22 -> 11-30
+    "hycom_2700_1113" => (run_fold = "design_1113_hycom_2700",
+                          grid = proj * "new_design_fix/roms_grd_2700m_1104.nc",
+                          child = proj * "new_design_fix/roms_grd_900m_1104.nc",
+                          moor = proj * "new_design_fix/roms_grd_2700m_1104_mor_edata.nc",
+                          fig = "ROMS_2700m_hycom1113"),
+    # same 1104 grid, CMEMS ini/bry + ERA5 forcing, TPXO10 tides, rivers, 2022-08-01 -> 11-30
+    "cmems_2700_1116" => (run_fold = "design_1116_cmems_2700",
+                          grid = proj * "new_design_cmems/grid/roms_grd_2700m_1104.nc",
+                          child = proj * "new_design_fix/roms_grd_900m_1104.nc",
+                          moor = proj * "new_design_fix/roms_grd_2700m_1104_mor_edata.nc",
+                          fig = "ROMS_2700m_cmems1116"))[capture_run]
+run_fold = cfg.run_fold
 datadir = proj * run_fold * "/after_joint/"   # roms_his.<yyyymmddHH>0000.nc, 4 hourly records each
-grid_fname = proj * "input/grid/roms_cmems_grd_2700m.nc"            # ROMS 2700m grid — data grid
-child_grid = proj * "input/grid/roms_grd_900m.nc"                   # ROMS 900m grid — boundary line
+grid_fname = cfg.grid            # ROMS 2700m grid — data grid
+child_grid = cfg.child           # ROMS 900m grid — boundary line
 parent_grid = proj * "input/grid/ohgrd_2.nc"   # NCOM 900m grid — boundary line + map extent (copy it from the USM
                                                # server, /home/mbui/ModelOutput/NCOM/grid/; without it the ROMS 2700m extent is used)
-mooring_loc = proj * "input/grid/roms_cmems_grd_2700m_mor_edata.nc"   # mooring locations in its global attributes
-figure_path = proj * "figure/20261016_hycomdata/ROMS_2700m_0801"   # same file names as the HYCOM figures; own folder so the 3mon run's ROMS_2700m figures are kept
+mooring_loc = cfg.moor   # mooring locations in its global attributes
+figure_path = proj * "figure/20261016_hycomdata/" * cfg.fig   # same file names as the HYCOM figures
 mkpath(figure_path)
+println("CAPTURE_RUN = $capture_run: $run_fold -> $figure_path")
 colorbar_file = proj * "data_upload/colorbar_nc.nc"   # HYCOM color ranges, written by HYCOM_data.jl
 
 ## settings

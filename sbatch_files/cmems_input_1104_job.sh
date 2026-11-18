@@ -1,0 +1,15 @@
+#!/bin/bash
+#SBATCH --job-name=cmems_input_1104
+#SBATCH --account=uso102
+#SBATCH --partition=shared
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=16:00:00
+#SBATCH --output=/expanse/lustre/projects/uso102/hchen54/new_design_cmems/cmems_input_%j.log
+
+export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
+cd /home/hchen54/internalwave_julia
+julia --project=. -e "using Pkg; Pkg.instantiate(); Pkg.precompile()"
+julia -t 16 --project=. input_file_make/cmems_input_make_1104.jl

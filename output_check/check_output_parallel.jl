@@ -1,7 +1,8 @@
 using Distributed
 
 n_workers = max(1, parse(Int, get(ENV, "SLURM_CPUS_PER_TASK", "7")) - 1)   # -1 reserves a CPU for this main process
-addprocs(n_workers)
+# heap-size-hint: make each worker GC before it grows past ~10 GB
+addprocs(n_workers; exeflags = "--heap-size-hint=10G")
 println("running with $(nprocs() - 1) worker processes")
 
 @everywhere begin
@@ -10,7 +11,8 @@ println("running with $(nprocs() - 1) worker processes")
     include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")
     include("/home/hchen54/internalwave_julia/function/plotting_fun.jl")
 
-    # which run to plot: CHECK_RUN=cmems_2700m (default), cmems_2700m_3mon, cmems_2700m_0801 or 900m_pure_or
+    # which run to plot: CHECK_RUN=cmems_2700m (default), cmems_2700m_3mon, cmems_2700m_0801,
+    # 900m_pure_or, hycom_2700_1113 or cmems_2700_1116
     # (the workers inherit ENV from the main process)
     run_name = get(ENV, "CHECK_RUN", "cmems_2700m")
     proj = "/expanse/lustre/projects/uso102/hchen54/"
@@ -30,7 +32,17 @@ println("running with $(nprocs() - 1) worker processes")
         # 900 m NCOM run, 686 x 856 rho points
         "900m_pure_or" => (grid = proj * "input/grid/roms_grd_900m.nc",
                            moor = proj * "input/roms_grd_900m_mor_edata.nc",
-                           fold = "amazon_900m_pure_or", skip = 40))[run_name]
+                           fold = "amazon_900m_pure_or", skip = 40),
+        # new design 1104 grid (hmin 10 m), HYCOM bry + NCOM forcing, dynamic bry, rivers,
+        # 2022-08-22 -> 11-30, 526 x 657 rho points
+        "hycom_2700_1113" => (grid = proj * "new_design_fix/roms_grd_2700m_1104.nc",
+                              moor = proj * "new_design_fix/roms_grd_2700m_1104_mor_edata.nc",
+                              fold = "design_1113_hycom_2700", skip = 31),
+        # same 1104 grid (identical to new_design_fix copy), CMEMS ini/bry + ERA5 forcing,
+        # TPXO10 tides, rivers, 2022-08-01 -> 11-30
+        "cmems_2700_1116" => (grid = proj * "new_design_cmems/grid/roms_grd_2700m_1104.nc",
+                              moor = proj * "new_design_fix/roms_grd_2700m_1104_mor_edata.nc",
+                              fold = "design_1116_cmems_2700", skip = 31))[run_name]
 
     grid_fname = run_cfg.grid   # the grid_file listed in the .nc's global attributes
     mooring_file = run_cfg.moor   # french, M1..M4, CPIES1..9
@@ -183,75 +195,18 @@ end
     zeta_grad_masked = ifelse.(mask_rho .== 0, NaN, zeta_gradient(zeta))
  
     # theta_s/theta_b/hc/N are all cheap metadata — attributes, plus a
-    # variable's shape without reading its actual data — so we can always
-    # fetch them without waiting on the (possibly skippable) full temp read
-    # below. This is what z/z_p (needed by every plot type) depend on.
+    # variable's shape without reading its actual data.
     theta_s, theta_b, hc, N = NCDataset(fname) do ds
         ds.attrib["theta_s"], ds.attrib["theta_b"], ds.attrib["hc"], size(ds["temp"], 3)
     end
- 
-    z = zeros(size(zeta, 1), size(zeta, 2), N, ntime)
-    Cs = nothing
+
+    ## PLOTS — one set of files per ocean_time step.
+    # 3D fields (z, temp, u, v and everything derived from them) are read and
+    # computed ONE time step at a time and dropped before the next one: holding
+    # all 4 records of a 526x657x128 file at once costs ~14 GB per worker
+    # (OOM with 15 workers, job 55777023); per step it is ~4 GB.
     for t in 1:ntime
-        z_dum, Cs = zlevs3(h, zeta[:, :, t], theta_s, theta_b, hc, N, "r", "new2008")
-        z[:, :, :, t] = permutedims(z_dum, (2, 3, 1))
-    end
-    z_p = rho2p(z)
- 
-    ## TEMP DATA — only actually read the (large) temp array if the temp
-    # plot for this file's last time step isn't already sitting on disk
-    if isfile(outname_temp_last)
-        println("temp plots already exist for ", fname, ", skipping temp read")
-    else
-        temp = NCDataset(fname) do ds
-            ds["temp"][:, :, :,:]
-        end
-        println(fname, " => size(temp) = ", size(temp))
-        temp_masked = ifelse.(mask_rho .== 0, NaN32, temp)
-    end
- 
-    ## vel data for speed + vorticity + SSH gradient (its arrows) — same idea,
-    # skip the read if every plot that needs it already exists for this
-    # file's last time step
-    if isfile(outname_speed_last) && isfile(outname_vor_last) && isfile(outname_grad_last)
-        println("speed/vorticity/SSH gradient plots already exist for ", fname, ", skipping u/v read")
-    else
-        u,v = NCDataset(fname) do ds
-            ds["u"][:, :, :,:]  , ds["v"][:, :, :,:]
-        end
-        println(fname, " => size(u) = ", size(u))
-        println(fname, " => size(v) = ", size(v))
- 
-        ## speed
-        # average raw (unmasked) u, v onto the rho grid first, then mask the
-        # result — masking beforehand would spread NaN from land onto valid
-        # ocean cells one row/column too far, same reasoning as vorticity below
-        u_rho = u2rho(u)   # still grid-relative (xi/eta), not east/north
-        v_rho = v2rho(v)
- 
-        # speed is rotation-invariant, so no need to rotate before this
-        speed = sqrt.(u_rho .^ 2 .+ v_rho .^ 2)
-        speed_masked = ifelse.(mask_rho .== 0, NaN32, speed)
- 
-        # but quiver arrows plotted against true lon/lat DO need rotating out of
-        # the grid's local xi/eta directions into true east/north, using the
-        # grid's rotation angle (radians) from the grid file
-        u_east = u_rho .* cos.(grid_angle) .- v_rho .* sin.(grid_angle)
-        v_north = u_rho .* sin.(grid_angle) .+ v_rho .* cos.(grid_angle)
-        u_east_masked = ifelse.(mask_rho .== 0, NaN32, u_east)
-        v_north_masked = ifelse.(mask_rho .== 0, NaN32, v_north)
- 
-        ## VORTICITY
-        # use the raw (unmasked) u, v here — masking with NaN before differencing
-        # would spread NaN into neighboring cells; mask the result afterward instead
-        vor_psi = vorticity_cal(u, v, pm, pn)   # relative vorticity on the PSI grid
-        vor_psi_masked = ifelse.(mask_p .== 0, NaN32, vor_psi)
-    end
- 
- 
-    ## PLOTS — one set of files per ocean_time step
-    for t in 1:ntime
- 
+
         # skip incomplete/fill-valued records — e.g. the last time step of a
         # file still being actively written, where every variable is left at
         # the raw NetCDF fill value (~9.97e36) instead of real data
@@ -259,9 +214,59 @@ end
             println("skipping t=$t ($(str1[t])) — looks like an incomplete/fill-valued record")
             continue
         end
- 
-        # -- SSH --
+
         outname_zeta = joinpath(figure_path, "zeta_plot_$(str2[t]).png")
+        outname_temp = joinpath(figure_path, "temp_depth_plot_$(str2[t]).png")
+        outname_speed = joinpath(figure_path, "speed_plot_$(str2[t]).png")
+        outname_vor = joinpath(figure_path, "vorticity_plot_$(str2[t]).png")
+        outname_grad = joinpath(figure_path, "zeta_grad_plot_$(str2[t]).png")
+        need_temp = !isfile(outname_temp)
+        need_uv = !(isfile(outname_speed) && isfile(outname_vor) && isfile(outname_grad))
+
+        # z for this step only: (xi, eta, N)
+        if need_temp || need_uv
+            z_dum, _ = zlevs3(h, zeta[:, :, t], theta_s, theta_b, hc, N, "r", "new2008")
+            z = permutedims(z_dum, (2, 3, 1))
+            z_dum = nothing
+        end
+
+        if need_temp
+            temp = NCDataset(fname) do ds
+                ds["temp"][:, :, :, t]
+            end
+            temp_masked = ifelse.(mask_rho .== 0, NaN32, temp)
+            temp = nothing
+        end
+
+        if need_uv
+            u, v = NCDataset(fname) do ds
+                ds["u"][:, :, :, t], ds["v"][:, :, :, t]
+            end
+            # average raw (unmasked) u, v onto the rho grid first, then mask the
+            # result — masking beforehand would spread NaN from land onto valid
+            # ocean cells one row/column too far, same reasoning as vorticity below
+            u_rho = u2rho(u)   # still grid-relative (xi/eta), not east/north
+            v_rho = v2rho(v)
+            # speed is rotation-invariant, so no need to rotate before this
+            speed_masked = ifelse.(mask_rho .== 0, NaN32, sqrt.(u_rho .^ 2 .+ v_rho .^ 2))
+            # quiver arrows plotted against true lon/lat need rotating out of the
+            # grid's xi/eta directions into east/north with the grid angle
+            u_east_masked = ifelse.(mask_rho .== 0, NaN32, u_rho .* cos.(grid_angle) .- v_rho .* sin.(grid_angle))
+            v_north_masked = ifelse.(mask_rho .== 0, NaN32, u_rho .* sin.(grid_angle) .+ v_rho .* cos.(grid_angle))
+            u_rho = v_rho = nothing
+            # vorticity from the raw (unmasked) u, v; mask the result afterward
+            if !isfile(outname_vor)
+                vor_psi_masked = ifelse.(mask_p .== 0, NaN32, vorticity_cal(u, v, pm, pn))
+                z_p = rho2p(z)
+            end
+            u = v = nothing
+            # 1 m velocity: used by speed, vorticity and SSH-gradient arrows
+            u_east_1m = slice_at_depth(z, u_east_masked, -1.0)
+            v_north_1m = slice_at_depth(z, v_north_masked, -1.0)
+            u_east_masked = v_north_masked = nothing
+        end
+
+        # -- SSH --
         if isfile(outname_zeta)
             println("already exists, skipping: ", outname_zeta)
         else
@@ -276,18 +281,17 @@ end
             figsave(outname_zeta, fig)
             println("saved plot to ", outname_zeta)
         end
- 
+
         # -- TEMP --
-        # slice_at_depth does per-column vertical interpolation only (same
-        # horizontal grid in/out) — z and temp_masked here are one time step's
-        # (M, L, N) fields; target depth is in meters, negative below the surface.
-        outname_temp = joinpath(figure_path, "temp_depth_plot_$(str2[t]).png")
-        if isfile(outname_temp)
+        # slice_at_depth does per-column vertical interpolation only; target
+        # depth is in meters, negative below the surface.
+        if !need_temp
             println("already exists, skipping: ", outname_temp)
         else
-            temp_1m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -1.0)
-            temp_100m = slice_at_depth(z[:, :, :, t], temp_masked[:, :, :, t], -100.0)
- 
+            temp_1m = slice_at_depth(z, temp_masked, -1.0)
+            temp_100m = slice_at_depth(z, temp_masked, -100.0)
+            temp_masked = nothing
+
             # two map panels side by side: twice the width of the single-panel
             # plots (36 x 13.5 cm); page = 36 keeps the font at 10 pt so each
             # panel looks the same as the other figures
@@ -303,16 +307,13 @@ end
             figsave(outname_temp, fig)
             println("saved plot to ", outname_temp)
         end
- 
+
         # -- SPEED --
-        outname_speed = joinpath(figure_path, "speed_plot_$(str2[t]).png")
         if isfile(outname_speed)
             println("already exists, skipping: ", outname_speed)
         else
-            speed_1m = slice_at_depth(z[:, :, :, t], speed_masked[:, :, :, t], -1.0)
-            u_east_1m = slice_at_depth(z[:, :, :, t], u_east_masked[:, :, :, t], -1.0)
-            v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
- 
+            speed_1m = slice_at_depth(z, speed_masked, -1.0)
+
             fig = Figure(; figkw(18, 13.5)...)
             ax = map_axis(fig[1, 1]; title = "Speed at 1 m, $(str1[t])")
             sp = plot_curvilinear!(ax, lon_rho, lat_rho, speed_1m; colormap = :speed, colorrange = (0, 2))
@@ -324,20 +325,15 @@ end
             figsave(outname_speed, fig)
             println("saved plot to ", outname_speed)
         end
- 
+        need_uv && (speed_masked = nothing)
+
         # -- VORTICITY --
-        outname_vor = joinpath(figure_path, "vorticity_plot_$(str2[t]).png")
         if isfile(outname_vor)
             println("already exists, skipping: ", outname_vor)
         else
-            # speed's u_east_1m/v_north_1m may have been skipped above (if the
-            # speed plot already existed), so recompute them here too — cheap
-            # relative to the rest of this block, and keeps this block able to
-            # run independently of the speed one.
-            u_east_1m = slice_at_depth(z[:, :, :, t], u_east_masked[:, :, :, t], -1.0)
-            v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
-            vor_1m = slice_at_depth(z_p[:, :, :, t], vor_psi_masked[:, :, :, t], -1.0)
- 
+            vor_1m = slice_at_depth(z_p, vor_psi_masked, -1.0)
+            vor_psi_masked = z_p = nothing
+
             # clim = 5 * mean(abs, filter(!isnan, vor_1m))   # symmetric color limits centered on 0
             clim = 5e-5;
             fig = Figure(; figkw(18, 13.5)...)
@@ -352,16 +348,11 @@ end
             figsave(outname_vor, fig)
             println("saved plot to ", outname_vor)
         end
- 
+
         # -- SSH GRADIENT --
-        outname_grad = joinpath(figure_path, "zeta_grad_plot_$(str2[t]).png")
         if isfile(outname_grad)
             println("already exists, skipping: ", outname_grad)
         else
-            # recomputed here for the same reason as in the vorticity block
-            u_east_1m = slice_at_depth(z[:, :, :, t], u_east_masked[:, :, :, t], -1.0)
-            v_north_1m = slice_at_depth(z[:, :, :, t], v_north_masked[:, :, :, t], -1.0)
- 
             # small canvas = relatively larger text; the extra bottom padding
             # (left, right, bottom, top) keeps the "Longitude" label from being cut off
             fig = Figure(; figkw(18, 15.3)..., figure_padding = (11, 11, 29, 11))
@@ -376,6 +367,9 @@ end
             figsave(outname_grad, fig)
             println("saved plot to ", outname_grad)
         end
+
+        z = nothing
+        GC.gc()   # hand this step's ~4 GB back before reading the next one
     end
 end
 
@@ -424,6 +418,13 @@ function make_movie(prefix::String; fps = 4)
     end
     rm(listfile)
     println("saved movie to ", outname)
+
+    # the movie holds every frame, so drop the PNGs (KEEP_PNG=1 keeps them).
+    # run() above throws if ffmpeg fails, so this is only reached on success.
+    if get(ENV, "KEEP_PNG", "0") != "1" && filesize(outname) > 0
+        foreach(rm, pngs)
+        println("deleted $(length(pngs)) $(prefix) PNGs")
+    end
 end
 
 make_movie("zeta_plot")

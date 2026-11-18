@@ -1039,7 +1039,7 @@ if 14 in bin_steps
         Legend(fig[3, 2], a3; framevisible = false, labelsize = 8pt, halign = :left, tellheight = false)
         mlabel = m == "modesum" ? "modes 1-$(NMODE) (sum)" : "mode-$(replace(m, "mode" => ""))"
         Label(fig[0, 1:2], "$mlabel KE and APE, $(get(band_desc, b, b)), mean across ±$(round(Int, side_km)) km of the mooring line\n" *
-              "DFF north 0–180° / south 180–360° (grid); $dff_run, $(replace(split(split(dse.attrib["periods"], ";")[1], "= ")[end], "T00:00:00" => ""))";
+              "DFF north 0–180° / south 180–360°; $dff_run, $(replace(split(split(dse.attrib["periods"], ";")[1], "= ")[end], "T00:00:00" => ""))";
               fontsize = 11pt, font = :bold)
         Label(fig[4, 1:2], strip_note; fontsize = 8pt)
         rowgap!(fig.layout, 8)

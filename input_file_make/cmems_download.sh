@@ -24,7 +24,10 @@ mkdir -p "$OUT"
 # grid extent + ~0.7 deg margin; one extra day on each side of the run.
 # Defaults: 2022-08-24..2022-09-30 run, no file suffix. Override, e.g.
 #     T0=2022-08-21T00:00:00 T1=2022-12-01T00:00:00 SUF=_0822_1130 bash cmems_download.sh
-BOX="--minimum-longitude -51.5 --maximum-longitude -35.5 --minimum-latitude -3.5 --maximum-latitude 14.0"
+# box override (new design 1104 grid, lon -54.3..-34.8, lat -6.3..14.0, + ~0.7 deg):
+#     LON0=-55 LON1=-34 LAT0=-7 LAT1=15 ...
+: "${LON0:=-51.5}"; : "${LON1:=-35.5}"; : "${LAT0:=-3.5}"; : "${LAT1:=14.0}"
+BOX="--minimum-longitude $LON0 --maximum-longitude $LON1 --minimum-latitude $LAT0 --maximum-latitude $LAT1"
 : "${T0:=2022-08-23T00:00:00}"; : "${T1:=2022-10-01T00:00:00}"; : "${SUF:=}"
 DEP="--minimum-depth 0 --maximum-depth 6000"
 COMMON="$BOX -o $OUT --skip-existing"
@@ -33,6 +36,6 @@ $CM subset -i cmems_mod_glo_phy-cur_anfc_0.083deg_PT6H-i    -v uo -v vo -t $T0 -
 $CM subset -i cmems_mod_glo_phy-thetao_anfc_0.083deg_PT6H-i -v thetao   -t $T0 -T $T1 $DEP $COMMON -f cmems_temp_6h$SUF.nc
 $CM subset -i cmems_mod_glo_phy-so_anfc_0.083deg_PT6H-i     -v so       -t $T0 -T $T1 $DEP $COMMON -f cmems_salt_6h$SUF.nc
 $CM subset -i cmems_mod_glo_phy_anfc_0.083deg_PT1H-m        -v zos      -t $T0 -T $T1 $COMMON -f cmems_zos_1h$SUF.nc
-$CM subset -i cmems_mod_glo_phy_anfc_0.083deg_static        -v deptho -v mask $DEP $COMMON -f cmems_static.nc
+$CM subset -i cmems_mod_glo_phy_anfc_0.083deg_static        -v deptho -v mask $DEP $COMMON -f cmems_static$SUF.nc
 
 ls -lh "$OUT"

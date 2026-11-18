@@ -1,14 +1,14 @@
 using NCDatasets
 
-src_dir = "/expanse/lustre/projects/uso102/hchen54/amazon_2700m_cmems_3mon/after_joint"
-out_dir = "/expanse/lustre/projects/uso102/hchen54/amazon_2700m_cmems_3mon/mooring_merged"
+src_dir = "/expanse/lustre/projects/uso102/hchen54/design_1113_hycom_2700/after_joint"
+out_dir = "/expanse/lustre/projects/uso102/hchen54/design_1113_hycom_2700/mooring_merged"
 mkpath(out_dir)
 
 files = filter(f -> endswith(f, ".nc"), readdir(src_dir))
 instruments = unique(first.(split.(files, '.')))
 filter!(!=("ocean"), instruments)   # ocean.*.nc are empty (0 time records)
-# skip ROMS model output (roms_dia, roms_his, roms_avg, roms_rst, ...); only merge mooring/station files
-filter!(inst -> !occursin(r"(^|_)(dia|his|avg|rst)$", inst), instruments)
+# skip ROMS model output (roms_dia, roms_his, roms_avg, roms_rst, *_bry, ...); only merge mooring/station files
+filter!(inst -> !occursin(r"(^|_)(dia|his|avg|rst|bry)$", inst), instruments)
 
 for inst in instruments
     # the timestamp in the name is yyyymmddHHMMSS, so sorting by name == sorting by time
@@ -35,5 +35,5 @@ for inst in instruments
         mv(tmpfile, outfile; force = true)
         println(inst, ": ", length(fnames), " files, ", length(t), " records -> ", outfile)
     end
-    GC.gc()   # free this instrument's arrays before opening the next 196 files
+    GC.gc()   # free this instrument's arrays before opening the next batch of files
 end

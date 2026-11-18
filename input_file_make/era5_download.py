@@ -1,8 +1,7 @@
 """era5_download.py
 
-ERA5 hourly single-level fields for the 2700 m Amazon grid (lon -50.8..-36.2,
-lat -2.3..13.0) + margin, 2022-08-21 00:00 .. 2022-12-01 00:00, from the
-Copernicus Climate Data Store (credentials in ~/.cdsapirc).
+ERA5 hourly single-level fields for the Amazon grid + margin, from the
+Copernicus Climate Data Store (credentials in ~/.cdsapirc). Settings below.
 
 One request per month; each returns a zip with
     data_stream-oper_stepType-avg.nc      avg_* : means over the hour ENDING at valid_time
@@ -26,11 +25,15 @@ import os
 import zipfile
 import cdsapi
 
-out = "/expanse/lustre/projects/uso102/hchen54/ERA5_DATA/"
-# one extra day before the Aug 1 start; 08-21 .. 12-01 is already in <yyyymm>/
-t0, t1 = dt.datetime(2022, 7, 31), dt.datetime(2022, 8, 20)
-suf = "_early"   # ERA5_DATA/<yyyymm><suf>/, so the existing 202208/ is kept ("" for the 08-21 .. 12-01 download)
-area = [14.5, -52.0, -4.0, -35.0]   # N, W, S, E
+# Current setup: new design 1104 grid (lon -54.3..-34.8, lat -6.3..14.0) + ~1 deg,
+# 2022-07-31 00:00 .. 2022-12-01 23:00, into ERA5_DATA_new/<yyyymm>/ (swapped in
+# for ERA5_DATA/ by era5_swap_job.sh once complete).
+# Earlier downloads: ERA5_DATA/, area [14.5, -52, -4, -35], 08-21 .. 12-01 and
+# 07-31 .. 08-20 (suf "_early").
+out = "/expanse/lustre/projects/uso102/hchen54/ERA5_DATA_new/"
+t0, t1 = dt.datetime(2022, 7, 31), dt.datetime(2022, 12, 1)
+suf = ""   # folder = <yyyymm><suf>
+area = [16.0, -56.0, -8.0, -33.0]   # N, W, S, E
 
 variables = [
     # fluxes for the ROMS flux forcing

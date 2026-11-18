@@ -15,6 +15,6 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}  # replace with however Julia gets loaded on this cluster
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files 
-: "${CHECK_RUN:=cmems_2700m_3mon}"   # or cmems_2700m (37-day test); override with CHECK_RUN=... sbatch ...
+: "${CHECK_RUN:=cmems_2700m_3mon}"   # or cmems_2700m (37-day test), hycom_2700_1113, cmems_2700_1116; override with CHECK_RUN=... sbatch ...
 export CHECK_RUN
 julia output_check/check_output_parallel.jl 2>&1 | tee log_files/check_output_${CHECK_RUN}.log

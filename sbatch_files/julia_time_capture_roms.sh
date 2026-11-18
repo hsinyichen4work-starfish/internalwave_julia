@@ -13,4 +13,6 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
-julia --project=. model_validation/HYCOM/time_capture_ROMS.jl 2>&1 | tee log_files/time_capture_ROMS.log
+: "${CAPTURE_RUN:=cmems_0801}"   # or hycom_2700_1113 / cmems_2700_1116; override with CAPTURE_RUN=... sbatch ...
+export CAPTURE_RUN
+julia --project=. model_validation/HYCOM/time_capture_ROMS.jl 2>&1 | tee log_files/time_capture_ROMS_${CAPTURE_RUN}.log
