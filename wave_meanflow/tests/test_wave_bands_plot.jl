@@ -17,7 +17,9 @@ q = findfirst(((ix, jy),) -> 200 in ix && 250 in jy, tiles); ix, jy = tiles[q]
 xbar, zbar = tile_means(win, R, "rho", G, ix, jy)
 X = Dict(b => wave_series_tile("rho", ix, jy, win, D, G, xbar, zbar, bg_weights(win, b)) for b in ("window", "interp"))
 
-# ---- p_wave check (interp background)
+# ---- p_wave check (interp background); SKIP_P=true skips it (plots only)
+const ZMAX = parse(Float64, get(ENV, "ZMAX", "300"))   # plotted depth range 0..ZMAX m
+if get(ENV, "SKIP_P", "false") != "true"
 x = X["interp"]; ζt = view(G.ζ, ix, jy, :); ht = G.h[ix, jy]; dz0 = G.dz0[ix, jy, :]; z0 = G.z0[ix, jy, :]
 t = @elapsed p = p_from_rho(x, ζt, ht, dz0)
 @printf("p_wave: %.1f s, max |p| %.1f Pa, non-finite %d, surface level max |p| %.2f Pa\n", t, maximum(abs, p), count(!isfinite, p), maximum(abs, p[:, :, end, :]))
@@ -35,6 +37,7 @@ for b in BANDS
     @printf("p_wave %-7s var share %.1f%%, rms %.1f Pa\n", b.name, 100Statistics.var(y) / vp, sqrt(mean(abs2, y)))
 end
 p = nothing; GC.gc()
+end
 
 # ---- time-depth plots of rho_wave hp9 and bp9_15 at two columns, window vs interp background
 h = G.h[ix, jy]
@@ -50,16 +53,18 @@ for (lab, (ig, jg)) in cols
     Label(fig[0, 1:3], @sprintf("rho_wave bands at (xi %d, eta %d), h = %.0f m — window-mean vs time-interpolated background; dashed = window edges", ig, jg, G.h[ig, jg]),
           fontsize = 16)
     for (r, b) in enumerate(bsel)
-        lim = maximum(abs, F[("interp", b.name)][i, j, :, :]) * 0.8
+        top = findall(>=(-ZMAX), zm)                                           # levels in the plotted depth range
+        lim = maximum(abs, F[("interp", b.name)][i, j, top, :]) * 0.8
         local hm
         for (c, bg) in enumerate(("window", "interp"))
             ax = Axis(fig[r, c]; title = "rho_wave_$(b.name), background = $bg", xlabel = "days since 2022-09-15",
                       ylabel = "depth (m)")
             hm = heatmap!(ax, days, zm, permutedims(F[(bg, b.name)][i, j, :, :]); colormap = Reverse(:RdBu), colorrange = (-lim, lim))
             vlines!(ax, edges; color = (:black, 0.5), linestyle = :dash, linewidth = 1)
+            ylims!(ax, max(-ZMAX, minimum(zm)), 0)
         end
         Colorbar(fig[r, 3], hm; label = "rho_wave_$(b.name) (kg m⁻³)")
     end
-    fn = joinpath(outdir, "wmf_rho_wave_bands_$(lab)_xi$(ig)_eta$(jg).png")
+    fn = joinpath(outdir, "wmf_rho_wave_bands_$(lab)_xi$(ig)_eta$(jg)_top$(round(Int, ZMAX))m.png")
     save(fn, fig); println("wrote ", fn)
 end
