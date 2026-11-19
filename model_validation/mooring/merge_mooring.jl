@@ -1,14 +1,14 @@
 using NCDatasets
 
-src_dir = "/expanse/lustre/projects/uso102/hchen54/design_1113_hycom_2700/after_joint"
-out_dir = "/expanse/lustre/projects/uso102/hchen54/design_1113_hycom_2700/mooring_merged"
+src_dir = "/expanse/lustre/projects/uso102/hchen54/design_1116_cmems_2700/after_joint"
+out_dir = "/expanse/lustre/projects/uso102/hchen54/design_1116_cmems_2700/mooring_merged"
 mkpath(out_dir)
 
 files = filter(f -> endswith(f, ".nc"), readdir(src_dir))
 instruments = unique(first.(split.(files, '.')))
 filter!(!=("ocean"), instruments)   # ocean.*.nc are empty (0 time records)
-# skip ROMS model output (roms_dia, roms_his, roms_avg, roms_rst, *_bry, ...); only merge mooring/station files
-filter!(inst -> !occursin(r"(^|_)(dia|his|avg|rst|bry)$", inst), instruments)
+# skip ROMS model output (roms_dia, roms_his, roms_avg, roms_rst, roms_ext, *_bry, ...); only merge mooring/station files
+filter!(inst -> !occursin(r"(^|_)(dia|his|avg|rst|bry|ext)$", inst), instruments)
 
 for inst in instruments
     # the timestamp in the name is yyyymmddHHMMSS, so sorting by name == sorting by time
