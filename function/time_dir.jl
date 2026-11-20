@@ -1,6 +1,6 @@
 # Time directory of a set of ROMS output files: which file and record holds each time step.
 # Each time step is read once (a file's last record can repeat the next file's first).
-# Needs `using NCDatasets, Dates, Printf` in the calling script.
+# Needs `using NCDatasets, Dates` in the calling script (Printf is loaded here, for @printf).
 #   td = time_dir(data_folder)                                            # all roms_his.*.nc, hourly
 #   td = time_dir(data_folder; spinup = 3)                                # drop the first 3 days
 #   td = time_dir(data_folder; tstart = DateTime(2022, 9, 1), tend = DateTime(2022, 9, 15))
@@ -13,6 +13,8 @@
 # Returns a NamedTuple:
 #   files  file names (sorted), TL  Dict step -> (file index, record), steps  step numbers kept (sorted),
 #   nt  number of steps, tdate  DateTime of each step, tsec  seconds since t_ref of each step
+
+using Printf
 
 function time_dir(data_folder; prefix = "roms_his.", t_ref = DateTime(1994, 1, 1), dt = 3600,
                   spinup = 0.0, tstart = nothing, tend = nothing, verbose = true)

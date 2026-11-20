@@ -4,18 +4,18 @@ include("/home/hsinyi/Documents/Julia/function/load_all.jl")
 include("/home/hsinyi/Documents/Julia/function/plotting_fun.jl")
 ##
 ## DIFFERENT data compare : 
-    # (1) ncom parent roms 900m grid
-    # (2) glorys parent roms 2700m grid
-    # (3) ncom 900m model  OR  HYCOM GOFS 3.1 1/12° (see `third_model` below; NCOM 900m and 2700m are nearly identical)
+    # (1) HYCOM parent roms 2700m grid  (design_1113_hycom_2700, new design grid roms_grd_2700m_1104)
+    # (2) GLORYS (CMEMS) parent roms 2700m grid  (design_1116_cmems_2700, same grid)
+    # (3) HYCOM GOFS 3.5 1/25° (HYCOM_DATA_NC_2700m_1104, with tides)  OR  ncom 900m model (see `third_model` below)
     # (4) ncom 2700m model
     # (5) glorys 1/12 deg model
     # (6) french mooring data (only on "french" location)
 
 mooring_loc = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"   # HPC output dir — contains avg/dia/his/rst files mixed together
-# 3rd model in the comparison: "hycom" (GOFS 3.1 expt_93.0, replaces NCOM 900m) or "ncom900" (the original setup)
+# 3rd model in the comparison: "hycom" (GOFS 3.5, the parent of ROMS (1); replaces NCOM 900m) or "ncom900"
 third_model = "hycom"
-figure_path = third_model == "hycom" ? "/home/hsinyi/figure/20261027_meanflow_comp/comp_for_hycom" :
-                                       "/home/hsinyi/figure/20261027_meanflow_comp"
+figure_path = third_model == "hycom" ? "/home/hsinyi/figure/20261027_meanflow_comp/1119_update" :
+                                       "/home/hsinyi/figure/20261027_meanflow_comp/1119_update_ncom900"
 
 # one entry per data source; `path` is a template where <moor> is replaced by the
 # mooring name (french, M1..M4, CPIES1..9), see src_file below
@@ -28,20 +28,21 @@ struct Source
 end
 Source(key, label, path) = Source(key, label, path, "", "")
 
-# ROMS 2700m (GLORYS parent) run: "3mon" (2022-08-24 to 11-29) or "1mon" (2022-08-24 to 09-29)
-roms_glorys_run  = "3mon"
-roms_glorys_path = Dict("3mon" => "/home/hsinyi/roms_data/mooring_ext_model/cmems3mon/<moor>.nc",
-                       "1mon" => "/home/hsinyi/roms_data/mooring_ext_model/cmems2700/mooring_merged/<moor>.nc")
+# both ROMS runs are on the new design 2700m grid (1104, hmin 10 m), same S-coordinate (theta_s 6, theta_b 3, hc 250)
+#   design_1113_hycom_2700: HYCOM ini/bry, 2022-08-22 to 11-29
+#   design_1116_cmems_2700: CMEMS (GLORYS) ini/bry, 2022-08-01 (tide spin-up) to 11-29
+roms_grd_1104   = "/home/hsinyi/roms_data/new_design_fix/roms_grd_2700m_1104.nc"
+roms_edata_1104 = "/home/hsinyi/roms_data/new_design_fix/roms_grd_2700m_1104_edata.nc"
 
 sources = [
-    Source("roms_ncom",  "ROMS 900m (NCOM parent)",  "/home/hsinyi/roms_data/mooring_ext_model/full_3mon/mooring_merged/<moor>.nc",
-           "/home/hsinyi/roms_data/grid/roms_grd_900m.nc", "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"),
+    Source("roms_hycom", "ROMS 2700m (HYCOM parent)", "/home/hsinyi/roms_data/mooring_ext_model/design_1113_hycom_2700/<moor>.nc",
+           roms_grd_1104, roms_edata_1104),
     Source("ncom2700",   "NCOM 2700m",               "/home/hsinyi/roms_data/NCOM_mooring_2700/NCOM_<moor>.nc"),
     third_model == "hycom" ?
-    Source("hycom",      "HYCOM GOFS 3.1 1/12°",     "/home/hsinyi/roms_data/HYCOM_mooring/HYCOM_<moor>.nc") :
+    Source("hycom",      "HYCOM GOFS 3.5 1/25°",     "/home/hsinyi/roms_data/HYCOM_mooring_NC/HYCOM_<moor>.nc") :
     Source("ncom900",    "NCOM 900m",                "/home/hsinyi/roms_data/NCOM_mooring/NCOM_<moor>.nc"),
-    Source("roms_glorys", "ROMS 2700m (GLORYS parent)", roms_glorys_path[roms_glorys_run],
-           "/home/hsinyi/roms_data/grid/roms_cmems_grd_2700m.nc", "/home/hsinyi/roms_data/grid/roms_cmems_grd_2700m_mor_edata.nc"),
+    Source("roms_glorys", "ROMS 2700m (GLORYS parent)", "/home/hsinyi/roms_data/mooring_ext_model/design_1116_cmems_2700/<moor>.nc",
+           roms_grd_1104, roms_edata_1104),
     Source("glorys",      "GLORYS 1/12°",              "/home/hsinyi/roms_data/GLOBAL_mooring/GLOBAL_<moor>.nc"),
     Source("french",     "French mooring",           "/home/hsinyi/data_notm/French_mooring"),   # folder: adcp_newalgo_raw_corr_angle.nc, ctd_corrected_raw.nc; only at "french"
 ]
@@ -74,6 +75,7 @@ end
 mkpath(figure_path)
 
 # the mooring extract (french.nc) has no S-coordinate parameters, so take them from the initial file
+# (900m ini: theta_s 6, theta_b 3, hc 250 = the same as the design_1104 2700m runs)
 ini_fname = "/home/hsinyi/roms_data/ini/roms_ini_900m2022082400.nc"
 theta_s, theta_b, hc = NCDataset(ini_fname) do ds
     # theta_s/theta_b/hc live on a size-1 "one" dimension in this file, so [1]
@@ -144,7 +146,7 @@ Read u, v, temp, salt of source `s` at mooring `moor` and put them on the fixed 
 """
 function load_moor(s::Source, moor, zg)
     if startswith(s.key, "roms")
-        # rows are s_rho levels, bottom first; theta_s/theta_b/hc from the 900m ini file are used for both runs
+        # rows are s_rho levels, bottom first; theta_s/theta_b/hc from the 900m ini file are used for both runs (same values)
         ocean_time, zeta, temp, salt, u, v = NCDataset(src_file(s, moor)) do ds
             ds["ocean_time"][:], ds["zeta"][1, :],
             ds["temp"][1, :, :], ds["salt"][1, :, :], ds["u"][1, :, :], ds["v"][1, :, :]
@@ -168,7 +170,7 @@ function load_moor(s::Source, moor, zg)
         end
         it = intime(time)
         if s.key == "hycom"
-            # HYCOM water_temp is IN-SITU temperature: convert to potential temperature like the other sources
+            # HYCOM temperature is IN-SITU (sea_water_temperature): convert to potential temperature like the other sources
             lon0, lat0 = mor_loc[moor]
             p  = gsw_p_from_z.(z, lat0)                          # (nz,) dbar
             SA = gsw_sa_from_sp.(salt, p, lon0, lat0)
@@ -254,8 +256,8 @@ Tband = (9.0, 15.0)   # band-pass cutoff periods (hours)
 Thp   = 9.0           # high-pass cutoff period (hours)
 
 # A source can only be band/high-passed when its Nyquist period (2 dt) is shorter than the shortest cutoff:
-# GLORYS (6 h, Nyquist 12 h) is skipped for both. HYCOM GOFS 3.1 has no tides, so it is left out too (nothing to show).
-no_tide = ("hycom",)
+# GLORYS (6 h, Nyquist 12 h) is skipped for both. HYCOM GOFS 3.5 has tides (3 h, Nyquist 6 h), so it is kept.
+no_tide = String[]   # sources without tides, left out of band/high-pass (GOFS 3.1 HYCOM would go here)
 dt_hours(d::MoorData) = median(Dates.value.(diff(d.time_uv))) / 3_600_000
 resolves(d::MoorData, Tmin) = 2 * dt_hours(d) < Tmin
 for (k, d) in data
@@ -394,20 +396,22 @@ depth_titles = ["$(round(Int, -d)) m" for d in line_depths]
 
 # one colour per source in every line / scatter plot; short = label on the scatter axes
 src_style = Dict(
-    "roms_ncom"  => (color = "#2a78d6", short = "ROMS 900m"),
+    "roms_hycom" => (color = "#2a78d6", short = "ROMS 2700m H"),
     "ncom900"    => (color = "#eb6834", short = "NCOM 900m"),
     "hycom"      => (color = "#eb6834", short = "HYCOM"),       # takes NCOM 900m's place (third_model)
     "ncom2700"   => (color = "#c9a400", short = "NCOM 2700m"),
-    "roms_glorys" => (color = "#8e44ad", short = "ROMS 2700m"),
+    "roms_glorys" => (color = "#8e44ad", short = "ROMS 2700m G"),
     "glorys"      => (color = "#2e9d5b", short = "GLORYS"),
     "french"     => (color = :black,    short = "Mooring"),
 )
-var_unit = Dict("temp" => "°C", "salt" => "psu", "u" => "m/s", "v" => "m/s", "speed" => "m/s", "direction" => "°")
+var_unit = Dict("temp" => "°C", "salt" => "psu", "u" => "m/s", "v" => "m/s", "speed" => "m/s", "direction" => "°",
+                "EKE" => "m²/s²", "KE" => "m²/s²", "KE_envelope" => "m²/s²")
+energy_vars = ("EKE", "KE", "KE_envelope")   # drawn on log axes in the scatter plots
 tagname(tag) = tag_desc[tag]
 
 # one panel per depth, one line per source (direction as dots: a line would jump at the 0/360 wrap)
 function plot_lines_at_depth(D, var; tag)
-    field, tfun, _, _, _, _ = Dict(time_depth_vars)[var]
+    field, tfun, _, _, _, _ = Dict(vcat(time_depth_vars, extra_time_depth_vars))[var]
     ylab = "$var ($(var_unit[var]))"
     srcs = filter(s -> haskey(D, s.key), sources)
     fig = Figure(; figkw(18, 4.2 * length(kd) + 2.5)..., figure_padding = (4, 8, 4, 4))
@@ -446,6 +450,14 @@ for (D, tag) in ((data, "raw"), (data_lp, "lp$(round(Int, Tcut))h")), (var, _) i
     plot_lines_at_depth(D, var; tag = tag)
 end
 
+# energy at the fixed depths: EKE of the 28 h low-passed flow, and the KE envelope (KE itself oscillates
+# at twice the tidal frequency, the envelope shows the spring-neap / event changes) of the 9-15 h band-passed
+# and 9 h high-passed flow
+plot_lines_at_depth(data_lp, "EKE"; tag = "lp$(round(Int, Tcut))h")
+for (D, tag) in ((data_bp, "bp$(round(Int, Tband[1]))-$(round(Int, Tband[2]))h"), (data_hp, "hp$(round(Int, Thp))h"))
+    plot_lines_at_depth(D, "KE_envelope"; tag = tag)
+end
+
 # --- scatter: model vs mooring, on common time bins ---
 # Average a (nrow, nt) field into time bins of length dt starting at tlim[1], the same for every source, NaN
 # ignored. Returns (bin-centre times, (nrow, nbin)). A bin is NaN when it holds fewer than minfrac of the
@@ -472,26 +484,62 @@ end
 
 # all variables at line_depths on bins of dt; speed and direction from the binned u, v (a direction
 # cannot be averaged as a number, 359° and 1° would give 180°)
-function binned(d, dt)
+# energy = ["EKE" => eke, ...]: extra (nz, nt) fields on the u/v time axis, computed at full resolution and then
+# bin-averaged (a bin mean of KE is the mean energy over the bin, not the KE of the mean flow)
+function binned(d, dt; energy = Pair{String,Function}[])
     tb, u = time_average(d.time_uv, d.u[kd, :], dt)
     v = time_average(d.time_uv, d.v[kd, :], dt)[2]
-    return Dict("time" => tb, "u" => u, "v" => v, "speed" => hypot.(u, v), "direction" => mod.(atand.(u, v), 360),
-                "temp" => time_average(d.time_ts, d.temp[kd, :], dt)[2],
-                "salt" => time_average(d.time_ts, d.salt[kd, :], dt)[2])
+    B = Dict("time" => tb, "u" => u, "v" => v, "speed" => hypot.(u, v), "direction" => mod.(atand.(u, v), 360),
+             "temp" => time_average(d.time_ts, d.temp[kd, :], dt)[2],
+             "salt" => time_average(d.time_ts, d.salt[kd, :], dt)[2])
+    for (name, f) in energy
+        B[name] = time_average(d.time_uv, f(d)[kd, :], dt)[2]
+    end
+    return B
 end
 
-# raw: 6 h bins (the GLORYS time step; the others are 6 h means); low-passed: 1 day (nothing faster is left)
-scatter_dt = Dict("raw" => Hour(6), "lp$(round(Int, Tcut))h" => Day(1))
+# raw: 6 h bins (the GLORYS time step; the others are 6 h means); low-passed: 1 day (nothing faster is left);
+# band-/high-passed KE: 1 day (averages the KE over ~2 semidiurnal cycles)
+scatter_dt = Dict("raw" => Hour(6), "lp$(round(Int, Tcut))h" => Day(1),
+                  "bp$(round(Int, Tband[1]))-$(round(Int, Tband[2]))h" => Day(1), "hp$(round(Int, Thp))h" => Day(1))
+
+# Willmott (1981) index of agreement of model m against observation o (vectors, NaN pairs ignored):
+#   d = 1 - Σ(M - O)² / Σ(|M - Ō| + |O - Ō|)²,   Ō = mean of the observation
+# 1 = perfect, 0 = no skill; unlike r it penalises a bias and a wrong amplitude as well as a wrong phase.
+function willmott(m, o)
+    g = .!isnan.(m) .& .!isnan.(o)
+    count(g) < 3 && return NaN
+    m, o = m[g], o[g]
+    ob = mean(o)
+    den = sum((abs.(m .- ob) .+ abs.(o .- ob)) .^ 2)
+    return den > 0 ? 1 - sum((m .- o) .^ 2) / den : NaN
+end
+
+# Murphy (1988) skill score of model m against observation o, the climatology (mean of the observation) as
+# the reference forecast:
+#   SS = 1 - MSE(m, o) / MSE(Ō, o),   MSE(Ō, o) = (1/N) Σ (Ō - Oᵢ)² = σ_o²
+# 1 = perfect, 0 = no better than the constant Ō, < 0 = worse than Ō (unbounded below).
+function murphy(m, o)
+    g = .!isnan.(m) .& .!isnan.(o)
+    count(g) < 3 && return NaN
+    m, o = m[g], o[g]
+    v = mean((o .- mean(o)) .^ 2)
+    return v > 0 ? 1 - mean((m .- o) .^ 2) / v : NaN
+end
 
 # One row per model, one column per depth, with the 1:1 line; points coloured by date. r = correlation,
+# d = Willmott skill (see willmott, on the linear values also for energy),
 # N = number of bins where both are valid. For direction the axes are 0–360 and r is replaced by the mean
 # absolute angular difference (the short way round), so points in the top-left / bottom-right corners are close too.
+# Energy (EKE, KE) spans orders of magnitude: log10 axes, r is the correlation of log10 values, and
+# ratio = median of model / mooring (> 1: the model has too much energy).
 # pairs = [(y source key, x source key), …], one row each; default: every model against the mooring.
 # The x axis is labelled on every row when the rows have different x sources, otherwise on the last row only.
 function plot_scatter(B, var; tag, unit,
                       pairs = [(s.key, "french") for s in sources if s.key != "french" && haskey(B, s.key)],
                       subdir = "scatter", what = "models vs mooring")
     isdir = var == "direction"
+    islog = var in energy_vars
     crange = (tday(tlim[1]), tday(tlim[2]))
     ms = tag == "raw" ? 4 : 8
     xlabel_all = length(unique(last.(pairs))) > 1
@@ -499,23 +547,38 @@ function plot_scatter(B, var; tag, unit,
     for (row, (ykey, xkey)) in enumerate(pairs), (k, dtitle) in enumerate(depth_titles)
         x, y, st = B[xkey][var], B[ykey][var], src_style[ykey]
         tb = B[xkey]["time"]
-        good = findall(.!isnan.(x[k, :]) .& .!isnan.(y[k, :]))
+        ok = .!isnan.(x[k, :]) .& .!isnan.(y[k, :])
+        islog && (ok .&= (x[k, :] .> 0) .& (y[k, :] .> 0))
+        good = findall(ok)
         xs, ys = x[k, good], y[k, good]
-        stat = isempty(good) ? "no data" :
-               isdir ? "mean |Δ| = $(round(Int, mean(abs.(mod.(ys .- xs .+ 180, 360) .- 180))))°" :
-               "r = $(length(good) > 2 ? round(cor(xs, ys), digits = 2) : NaN)"
-        ax = Axis(fig[row, k]; title = "$dtitle: $stat, N = $(length(good))", titlecolor = st.color,
+        # two title lines: (line 1, start of line 2); d = Willmott skill of y (model) against x (reference)
+        dstr = "d = $(round(willmott(ys, xs), digits = 2))"
+        stat1, stat2 = isempty(good) ? ("no data", "") :
+               isdir ? ("mean |Δ| = $(round(Int, mean(abs.(mod.(ys .- xs .+ 180, 360) .- 180))))°", "") :
+               islog ? ("r(log) = $(length(good) > 2 ? round(cor(log10.(xs), log10.(ys)), digits = 2) : NaN), $dstr",
+                        "ratio = $(round(median(ys ./ xs), sigdigits = 2)), ") :
+               ("r = $(length(good) > 2 ? round(cor(xs, ys), digits = 2) : NaN), $dstr", "")
+        ax = Axis(fig[row, k]; title = "$dtitle: $stat1\n$(stat2)N = $(length(good))", titlecolor = st.color,
                   titlealign = :left, titlegap = 2, titlesize = 8, aspect = 1,
                   xlabel = xlabel_all || row == length(pairs) ? "$(src_style[xkey].short) ($unit)" : "",
-                  ylabel = k == 1 ? "$(st.short) ($unit)" : "")
+                  ylabel = k == 1 ? "$(st.short) ($unit)" : "",
+                  xscale = islog ? log10 : identity, yscale = islog ? log10 : identity)
         isempty(good) && continue
         lo, hi = isdir ? (0.0, 360.0) : (min(minimum(xs), minimum(ys)), max(maximum(xs), maximum(ys)))
-        pad = isdir ? 0.0 : max(0.05 * (hi - lo), 1e-6)
-        isdir ? (ax.xticks = 0:90:360; ax.yticks = 0:90:360) : (ax.xticks = LinearTicks(3); ax.yticks = LinearTicks(3))
-        lines!(ax, [lo - pad, hi + pad], [lo - pad, hi + pad]; color = (:black, 0.5), linewidth = 1)
+        if islog
+            lo, hi = lo / 1.5, hi * 1.5          # padding, multiplicative on log axes
+            dec = 10.0 .^ (ceil(Int, log10(lo)):floor(Int, log10(hi)))   # ticks at whole decades only
+            declab = ["10" * map(c -> Dict(zip("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹"))[c], string(round(Int, log10(v)))) for v in dec]
+            ax.xticks = (dec, declab); ax.yticks = (dec, declab)
+        else
+            pad = isdir ? 0.0 : max(0.05 * (hi - lo), 1e-6)
+            lo, hi = lo - pad, hi + pad
+            isdir ? (ax.xticks = 0:90:360; ax.yticks = 0:90:360) : (ax.xticks = LinearTicks(3); ax.yticks = LinearTicks(3))
+        end
+        lines!(ax, [lo, hi], [lo, hi]; color = (:black, 0.5), linewidth = 1)
         scatter!(ax, xs, ys; color = tday(tb[good]), colormap = :viridis, colorrange = crange,
                  markersize = ms, strokewidth = ms > 6 ? 0.4 : 0, strokecolor = :black)
-        limits!(ax, lo - pad, hi + pad, lo - pad, hi + pad)
+        limits!(ax, lo, hi, lo, hi)
     end
     cb_dates = DateTime(2022, 9, 1):Day(15):tlim[2]
     Colorbar(fig[1:length(pairs), length(depth_titles) + 1]; colormap = :viridis, limits = crange, label = "Date (2022)",
@@ -532,13 +595,125 @@ end
 # the GLORYS family only: ROMS 2700m (GLORYS parent) vs mooring, GLORYS vs mooring, ROMS 2700m vs its parent GLORYS
 glorys_pairs = [("roms_glorys", "french"), ("glorys", "french"), ("roms_glorys", "glorys")]
 
+Bs = Dict{String,Any}()    # binned data of every tag, reused in the quantification section
 if haskey(data, "french")
     for (D, tag) in ((data, "raw"), (data_lp, "lp$(round(Int, Tcut))h"))
-        B = Dict(k => binned(d, scatter_dt[tag]) for (k, d) in D)
+        B = Bs[tag] = Dict(k => binned(d, scatter_dt[tag]) for (k, d) in D)
         for (var, _) in time_depth_vars
             plot_scatter(B, var; tag = tag, unit = var_unit[var])
             plot_scatter(B, var; tag = tag, unit = var_unit[var], pairs = glorys_pairs, subdir = "scatter_glorys",
                          what = "GLORYS family")
         end
+    end
+
+    # energy: EKE of the 28 h low-passed flow, KE of the 9-15 h band-passed and 9 h high-passed flow,
+    # daily means at the fixed depths. GLORYS (6 h) has no band-/high-passed data, so the GLORYS family
+    # figure is made for EKE only.
+    lp_tag = "lp$(round(Int, Tcut))h"
+    for (D, tag, var, f) in ((data_lp, lp_tag, "EKE", eke),
+                             (data_bp, "bp$(round(Int, Tband[1]))-$(round(Int, Tband[2]))h", "KE", ke),
+                             (data_hp, "hp$(round(Int, Thp))h", "KE", ke))
+        B = Dict(k => binned(d, scatter_dt[tag]; energy = [var => f]) for (k, d) in D)
+        Bs[tag] = B            # for lp this replaces the set above with the same values plus EKE
+        plot_scatter(B, var; tag = tag, unit = var_unit[var])
+        tag == lp_tag && plot_scatter(B, var; tag = tag, unit = var_unit[var], pairs = glorys_pairs,
+                                      subdir = "scatter_glorys", what = "GLORYS family")
+    end
+end
+
+## ===== quantification: Willmott skill d and r² of every model against the mooring =====
+# Same samples as the scatter plots: the binned values (raw 6 h, filtered 1 day bins) at line_depths, pairs where
+# both are valid. Both metrics on the linear values (also for EKE / KE). Direction is left out (not a linear
+# quantity). Saved as a CSV table and as one heatmap per metric: one panel per depth, models x variables.
+if haskey(data, "french")
+    lp_tag = "lp$(round(Int, Tcut))h"
+    bp_tag = "bp$(round(Int, Tband[1]))-$(round(Int, Tband[2]))h"
+    hp_tag = "hp$(round(Int, Thp))h"
+    skill_vars = ("temp", "salt", "u", "v", "speed")
+    skill_cols = vcat([("raw", v) for v in skill_vars], [(lp_tag, v) for v in skill_vars],
+                      [(lp_tag, "EKE"), (bp_tag, "KE"), (hp_tag, "KE")])
+    skill_models = [s.key for s in sources if s.key != "french"]
+
+    # skill[(metric)][depth index] = (nmodel, ncol) matrix, NaN where the model has no such data
+    skill = Dict(m => [fill(NaN, length(skill_models), length(skill_cols)) for _ in kd] for m in ("d", "r2", "ss"))
+    rows = String[]
+    for (c, (tag, var)) in enumerate(skill_cols), (i, mk) in enumerate(skill_models), (k, dtitle) in enumerate(depth_titles)
+        B = Bs[tag]
+        haskey(B, mk) && haskey(B, "french") || continue
+        mo, ob = B[mk][var][k, :], B["french"][var][k, :]
+        g = .!isnan.(mo) .& .!isnan.(ob)
+        n = count(g)
+        n < 3 && continue
+        d, r, ss = willmott(mo, ob), cor(mo[g], ob[g]), murphy(mo, ob)
+        skill["d"][k][i, c], skill["r2"][k][i, c], skill["ss"][k][i, c] = d, r^2, ss
+        # Murphy (1988) decomposition, population std (1/N) so that it is exact:
+        #   SS = r² - (r - σm/σo)² - ((m̄ - ō)/σo)²
+        #        correlation   conditional bias   unconditional bias
+        #                      (amplitude)        (mean offset)
+        σm, σo = std(mo[g]; corrected = false), std(ob[g]; corrected = false)
+        bias = mean(mo[g] .- ob[g])
+        cond_bias, uncond_bias = (r - σm / σo)^2, (bias / σo)^2
+        abs(r^2 - cond_bias - uncond_bias - ss) < 1e-8 * max(1, abs(ss)) ||
+            @warn "Murphy decomposition does not add up for $mk $tag $var $(depth_titles[k])"
+        push!(rows, join((tag, var, -line_depths[k], mk, n, round(r, digits = 4), round(r^2, digits = 4),
+                          round(d, digits = 4), round(ss, digits = 4),
+                          round(cond_bias, digits = 4), round(uncond_bias, digits = 4), round(σm / σo, digits = 4),
+                          round(bias, sigdigits = 4), round(sqrt(mean((mo[g] .- ob[g]) .^ 2)), sigdigits = 4),
+                          round(σo, sigdigits = 4)), ","))
+    end
+    qdir = joinpath(figure_path, "skill"); mkpath(qdir)
+    csvname = joinpath(qdir, "$(moor)_skill.csv")
+    open(csvname, "w") do io
+        # murphy_ss = r2 - ss_cond_bias - ss_uncond_bias; sigma_ratio = σ_model / σ_obs; sigma_obs in the variable's unit
+        println(io, "filter,var,depth_m,model,N,r,r2,willmott_d,murphy_ss,ss_cond_bias,ss_uncond_bias,sigma_ratio," *
+                    "bias_model_minus_obs,rmse,sigma_obs")
+        foreach(r -> println(io, r), rows)
+    end
+    println("saved ", csvname)
+
+    metric_label = Dict("d" => "Willmott skill d", "r2" => "r²", "ss" => "Murphy skill score SS")
+    # SS can be < 0 (worse than the mooring mean): diverging colours, 0 = white, clipped at -1
+    metric_cmap  = Dict("d" => :viridis, "r2" => :viridis, "ss" => :balance)
+    metric_range = Dict("d" => (0, 1), "r2" => (0, 1), "ss" => (-1, 1))
+    textcolor(metric, v) = metric == "ss" ? (abs(v) > 0.6 ? :white : :black) : (v > 0.6 ? :black : :white)
+    # column groups, separated by a white line: raw | low-passed | energy
+    col_group(t, v) = v in energy_vars ? 3 : t == "raw" ? 1 : 2
+    # cols: indices into skill_cols to draw; suffix: added to the file name
+    function plot_skill(metric, cols; suffix = "")
+        C = skill_cols[cols]
+        col_labels = ["$(v)\n$(t == "raw" ? "raw" : t)" for (t, v) in C]
+        grp = [col_group(t, v) for (t, v) in C]
+        seps = [c + 0.5 for c in 1:length(C)-1 if grp[c] != grp[c+1]]
+        fig = Figure(; figkw(18, 5.0 * length(kd) + 2)..., figure_padding = (4, 8, 4, 4))
+        local hm
+        for (k, dtitle) in enumerate(depth_titles)
+            S = skill[metric][k][:, cols]
+            ax = Axis(fig[k, 1]; title = dtitle, titlealign = :left, titlegap = 2, titlesize = 9,
+                      xticks = (1:length(C), k == length(kd) ? col_labels : fill("", length(C))),
+                      yticks = (1:length(skill_models), [src_style[m].short for m in skill_models]),
+                      xticklabelsize = 7, yticklabelsize = 8, yreversed = true)
+            hm = heatmap!(ax, 1:length(C), 1:length(skill_models), S'; colormap = metric_cmap[metric],
+                          colorrange = metric_range[metric], lowclip = :navy, nan_color = :grey90)
+            for i in axes(S, 1), c in axes(S, 2)
+                isnan(S[i, c]) && continue
+                text!(ax, c, i; text = string(round(S[i, c], digits = 2)), align = (:center, :center), fontsize = 7,
+                      color = textcolor(metric, S[i, c]))
+            end
+            vlines!(ax, seps; color = :white, linewidth = 2)   # raw | low-passed | energy
+        end
+        Colorbar(fig[1:length(kd), 2], hm; label = metric_label[metric])   # SS < -1: lowclip colour, value written
+        Label(fig[0, :], "$(metric_label[metric]) of each model against the mooring, $site\n" *
+              "raw: 6 h bins, filtered: 1 day bins; grey = no data", fontsize = 10, tellwidth = false)
+        rowgap!(fig.layout, 5); colgap!(fig.layout, 6)
+        fname = joinpath(qdir, "$(moor)_skill_$(metric)$(suffix).png")
+        figsave(fname, fig)
+        println("saved ", fname)
+        return fig
+    end
+
+    no_uv = findall(((t, v),) -> !(v in ("u", "v")), skill_cols)   # temp, salt, speed, EKE, KE
+    for metric in ("d", "r2", "ss")
+        plot_skill(metric, eachindex(skill_cols))              # every variable
+        plot_skill(metric, no_uv; suffix = "_noUV")            # without u, v
     end
 end

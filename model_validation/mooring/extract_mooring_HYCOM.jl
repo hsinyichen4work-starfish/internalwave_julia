@@ -1,20 +1,26 @@
 # extract_mooring_HYCOM.jl
 #
-# Extract (interpolate) GOFS 3.1 HYCOM (GLBy0.08/expt_93.0, 1/12.5°) output at the mooring locations.
+# Extract (interpolate) HYCOM output at the mooring locations.
 #
-# The HYCOM files are the ones from input_file_make/hycom_data_download.jl:
-# one file per variable per 3-hourly snapshot,
-#   <datadir>/<var>/hycom_gofs31_<var>_<yyyymmddTHH>.nc   (var = surf_el, water_temp,
-#                                                          salinity, water_u, water_v)
-# The script uses EVERY snapshot found in datadir that has all five variables
-# (a snapshot missing one is skipped with a warning). When more files are
-# downloaded, just run it again: the mooring files are rewritten with all times, sorted.
+# Data: the NetCDF HYCOM set in datadir (HYCOM_DATA_NC_2700m_1104; the same data as the
+# binary set in /home/mbui/ModelOutput/NCOM/HYCOM_data), one group of files per daily
+# 12Z forecast cycle:
+#   <datadir>/hycom_<yyyymmddHH>_grd.nc   Longitude, Latitude (eta, xi), depth(z)
+#   <datadir>/hycom_<yyyymmddHH>_ssh.nc   ssh(time, eta, xi)
+#   <datadir>/hycom_<yyyymmddHH>_ts.nc    layer_temperature, layer_salinity (time, z, eta, xi)
+#   <datadir>/hycom_<yyyymmddHH>_uv.nc    u_velocity, v_velocity (time, z, eta, xi)
+# MT(time) = days since 1900-12-31 00:00 (HYCOM model time). Each cycle has 3-hourly
+# records tau = 0..24 h, so tau 24 of a cycle is the same time as tau 0 of the next
+# one: for a duplicated time the record of the NEWER cycle (the analysis) is kept.
+# Land / below the seafloor is NaN.
+# The script uses EVERY cycle in datadir that has all four files (an incomplete
+# one is skipped with a warning). When more files are added, just run it again.
 #
 # Besides the moorings, the transect along the mooring line (straight line
 # M1 -> CPIES7, through M2, CPIES2, CPIES3, M3, CPIES4..6) is extracted every
 # dx_km, on the same points as in the NCOM / GLOBAL scripts.
 #
-# HYCOM is a regular lon/lat grid (0.08° lon x 0.04° lat) with fixed z-levels, so (as in
+# The grid is a regular lon/lat grid (0.04° lon x 0.02° lat) with 40 fixed z-levels, so (as in
 # extract_mooring_GLOBAL.jl) the horizontal interpolation is 4 bilinear weights
 # on the 4 surrounding columns. Only one small lon/lat box around all the
 # moorings and the transect is read from the files. A corner that is
@@ -38,8 +44,8 @@ include("/home/hsinyi/Documents/Julia/function/mooring_transect.jl")
 # ---------------------------------------------------------------------------
 # User input
 # ---------------------------------------------------------------------------
-datadir      = "/home/hsinyi/roms_data/HYCOM_downlaod/"     # <var>/hycom_gofs31_<var>_<yyyymmddTHH>.nc
-outdir       = "/home/hsinyi/roms_data/HYCOM_mooring/"     # one file per mooring: HYCOM_<name>.nc
+datadir      = "/home/hsinyi/roms_data/HYCOM_DATA_NC_2700m_1104/"   # hycom_<yyyymmddHH>_{grd,ssh,ts,uv}.nc
+outdir       = "/home/hsinyi/roms_data/HYCOM_mooring_NC/"           # one file per mooring: HYCOM_<name>.nc
 mooring_file = "/home/hsinyi/roms_data/grid/roms_grd_900m_mor_edata.nc"
 
 transect_ends = ("M1", "CPIES7")   # mooring line transect, from -> to
@@ -64,30 +70,36 @@ println("Moorings in this run : ", join(moor_name[moor_sel], ", "),
         do_transect ? "  + transect $(tr.name) ($(length(tr.lon)) points)" : "")
 
 # ---------------------------------------------------------------------------
-# Snapshots available: group the files by "<yyyymmddTHH>" and keep the
-# ones that have all five variables
+# Forecast cycles available: group the files by "<yyyymmddHH>" and keep the
+# ones that have all four files
 # ---------------------------------------------------------------------------
-kinds = ("surf_el", "water_temp", "salinity", "water_u", "water_v")
-file_re = r"^hycom_gofs31_(surf_el|water_temp|salinity|water_u|water_v)_(\d{8}T\d{2})\.nc$"
+kinds = ("grd", "ssh", "ts", "uv")
+file_re = r"^hycom_(\d{10})_(grd|ssh|ts|uv)\.nc$"
 snap = Dict{String,Dict{String,String}}()
-for k in kinds, f in readdir(joinpath(datadir, k))
+for f in readdir(datadir)
     m = match(file_re, f)
-    (m === nothing || m[1] != k) && continue
-    get!(snap, m[2], Dict{String,String}())[k] = joinpath(datadir, k, f)
+    m === nothing && continue
+    get!(snap, m[1], Dict{String,String}())[m[2]] = joinpath(datadir, f)
 end
 for (tag, fs) in snap
     missing_kinds = [k for k in kinds if !haskey(fs, k)]
     isempty(missing_kinds) || (@warn "$tag: no $(join(missing_kinds, ", ")) file, skipped"; delete!(snap, tag))
 end
 tags = sort(collect(keys(snap)))
-isempty(tags) && error("no complete HYCOM snapshots in $datadir")
-println("$(length(tags)) snapshots: $(first(tags)) .. $(last(tags))")
+isempty(tags) && error("no complete HYCOM cycles in $datadir")
+println("$(length(tags)) forecast cycles: $(first(tags)) .. $(last(tags))")
 
-# grid (same for every file): regional box, lon in 0..360 (NOT periodic), lat ascending,
-# 40 z-levels (positive down)
-lon, lat, dep = NCDataset(snap[tags[1]]["water_temp"]) do ds
-    Float64.(ds["lon"][:]), Float64.(ds["lat"][:]), Float64.(ds["depth"][:])
+# grid: Longitude/Latitude are stored 2D (xi, eta) but the grid is regular; lon in 0..360
+# (NOT periodic), lat ascending, 40 z-levels (positive down)
+function read_grid(f)
+    NCDataset(f) do ds
+        LON = Float64.(ds["Longitude"][:, :]); LAT = Float64.(ds["Latitude"][:, :])
+        lon, lat = LON[:, 1], LAT[1, :]
+        @assert all(LON .== lon) && all(LAT .== lat') "$f: grid is not a regular lon/lat grid"
+        lon, lat, Float64.(ds["depth"][:])
+    end
 end
+lon, lat, dep = read_grid(snap[tags[1]]["grd"])
 Nz = length(dep)
 
 # ---------------------------------------------------------------------------
@@ -149,6 +161,7 @@ j0, j1 = extrema(last.(all_corners))
 println("reading box i=$i0:$i1, j=$j0:$j1 ($(i1-i0+1) x $(j1-j0+1) columns)")
 
 # read the box of a 3D variable -> (i, j, depth), or of a 2D one -> (i, j, 1); missing -> NaN
+# (in Julia the dimensions are (xi, eta, z, time) = (lon, lat, depth, time))
 read_box(var, t) = ndims(var) == 4 ? Float64.(coalesce.(var[i0:i1, j0:j1, :, t], NaN)) :
                                      reshape(Float64.(coalesce.(var[i0:i1, j0:j1, t], NaN)), i1 - i0 + 1, j1 - j0 + 1, 1)
 
@@ -156,27 +169,30 @@ read_box(var, t) = ndims(var) == 4 ? Float64.(coalesce.(var[i0:i1, j0:j1, :, t],
 interp_point(B, corners, w) = wet_average(stack([B[i - i0 + 1, j - j0 + 1, :] for (i, j) in corners]), w)
 
 # ---------------------------------------------------------------------------
-# Time loop: every snapshot (and every record in it, in case a file has more than one)
+# Time loop: every cycle and every record (tau = 0, 3, .., 24 h) in it
 # ---------------------------------------------------------------------------
-varlist = [("temp", "water_temp"), ("salt", "salinity"),
-           ("u", "water_u"), ("v", "water_v"), ("ssh", "surf_el")]
+# (output name, file kind, variable name in the file)
+varlist = [("temp", "ts", "layer_temperature"), ("salt", "ts", "layer_salinity"),
+           ("u", "uv", "u_velocity"), ("v", "uv", "v_velocity"), ("ssh", "ssh", "ssh")]
+mt2datetime(mt) = DateTime(1900, 12, 31) + Millisecond(round(Int64, mt * 86_400_000))
 time_out = DateTime[]
-out = Dict(m.name => Dict(v => Vector{Float64}[] for (v, _) in varlist) for m in moor)
-tr_out = Dict(v => Matrix{Float64}[] for (v, _) in varlist)    # (depth, x) per record
+out = Dict(m.name => Dict(v => Vector{Float64}[] for (v, _, _) in varlist) for m in moor)
+tr_out = Dict(v => Matrix{Float64}[] for (v, _, _) in varlist)    # (depth, x) per record
 
 for (n, tag) in enumerate(tags)
     fs = snap[tag]
-    dss = Dict(k => NCDataset(fs[k]) for k in kinds)
+    glon, glat, gdep = read_grid(fs["grd"])
+    @assert glon == lon && glat == lat && gdep == dep "$tag: different grid"
+    dss = Dict(k => NCDataset(fs[k]) for k in ("ssh", "ts", "uv"))
     try
-        t_all = dss["water_temp"]["time"][:]
-        for k in kinds
-            @assert Float64.(dss[k]["lon"][:]) == lon && Float64.(dss[k]["lat"][:]) == lat "$tag: $k on a different grid"
-            @assert dss[k]["time"][:] == t_all "$tag: $k has a different time"
+        mt = dss["ts"]["MT"][:]
+        for k in ("ssh", "uv")
+            @assert dss[k]["MT"][:] == mt "$tag: $k has a different time"
         end
-        for t in eachindex(t_all)
-            push!(time_out, t_all[t])
-            for (v, ncvar) in varlist
-                B = read_box(dss[ncvar][ncvar], t)
+        for t in eachindex(mt)
+            push!(time_out, mt2datetime(mt[t]))
+            for (v, k, ncvar) in varlist
+                B = read_box(dss[k][ncvar], t)
                 for m in moor
                     push!(out[m.name][v], interp_point(B, m.corners, m.w))
                 end
@@ -186,14 +202,16 @@ for (n, tag) in enumerate(tags)
     finally
         foreach(close, values(dss))
     end
-    (n % 80 == 0 || n == length(tags)) && println("done $tag  ($n/$(length(tags)) snapshots)")
+    (n % 10 == 0 || n == length(tags)) && println("done $tag  ($n/$(length(tags)) cycles)")
 end
 
-# snapshots are sorted by file name; sort by valid time too, and drop duplicates
-# (should not happen with this data; kept as a safety check)
-it = unique(i -> time_out[i], sortperm(time_out))
-length(it) < length(time_out) && @warn "$(length(time_out) - length(it)) duplicate times dropped"
+# sort by valid time; tau 24 of a cycle = tau 0 of the next one: keep the record
+# read LAST (newer cycle). sortperm is stable, so reverse it, unique, reverse back.
+it = reverse(unique(i -> time_out[i], reverse(sortperm(time_out))))
+println("$(length(time_out) - length(it)) duplicate times (tau 24 = next tau 0) dropped, kept the newer cycle")
 time_out = time_out[it]
+dt = unique(diff(time_out))
+dt == [Hour(3)] || @warn "time step is not always 3 h: $(unique(dt)) (missing cycles?)"
 
 # ---------------------------------------------------------------------------
 # Save, like GLOBAL_<name>.nc: (z, time), z negative down and ASCENDING
@@ -204,10 +222,10 @@ for m in moor
     to_zt(x) = reverse(stack(x)[:, it], dims = 1)        # (depth, time) surface-first -> bottom-first
     fname = joinpath(outdir, "HYCOM_$(m.name).nc")
     NCDataset(fname, "c") do ds
-        ds.attrib["title"]   = "GOFS 3.1 HYCOM GLBy0.08 expt_93.0 interpolated to mooring $(m.name)"
+        ds.attrib["title"]   = "HYCOM ($(basename(rstrip(datadir, '/')))) interpolated to mooring $(m.name)"
         ds.attrib["station"] = m.name
         ds.attrib["source"]  = "extract_mooring_HYCOM.jl, data $datadir"
-        ds.attrib["note"]    = "3-hourly HYCOM snapshots; a time missing from datadir is skipped (no gap filling)"
+        ds.attrib["note"]    = "3-hourly HYCOM, daily 12Z cycles tau 0-21 h (tau 24 replaced by next cycle tau 0); a missing time is skipped (no gap filling)"
         defDim(ds, "z", Nz); defDim(ds, "time", length(time_out))
 
         defVar(ds, "lon", m.lon, (), attrib = ["units" => "degrees_east"])
@@ -235,7 +253,7 @@ if do_transect
     save_transect(joinpath(outdir, "HYCOM_$(tr.name).nc"), tr, reverse(-dep), time_out,
                   [v => (to_zxt(tr_out[v]), longname[v]...) for v in ("temp", "salt", "u", "v")];
                   ssh    = stack(tr_out["ssh"])[1, :, it],
-                  title  = "GOFS 3.1 HYCOM GLBy0.08 expt_93.0 interpolated to the $(tr.from) - $(tr.to) transect",
+                  title  = "HYCOM ($(basename(rstrip(datadir, '/')))) interpolated to the $(tr.from) - $(tr.to) transect",
                   source = "extract_mooring_HYCOM.jl, data $datadir",
-                  note   = "3-hourly HYCOM snapshots; a time missing from datadir is skipped (no gap filling)")
+                  note   = "3-hourly HYCOM, daily 12Z cycles tau 0-21 h (tau 24 replaced by next cycle tau 0); a missing time is skipped (no gap filling)")
 end
