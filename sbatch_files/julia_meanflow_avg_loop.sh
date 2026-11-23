@@ -6,11 +6,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=06:00:00
+#SBATCH --time=24:00:00
 #SBATCH --array=0-3
 #SBATCH --output=meanflow_loop_%A_%a.out
 #SBATCH --error=meanflow_loop_%A_%a.err
-# Monthly + half-monthly surface mean maps (meanflow/mean_flow_avg_loop.jl), one array task per source.
+# Monthly + half-monthly means (3-D file + surface maps) (meanflow/mean_flow_avg_loop.jl), one array task per source.
 #   sbatch julia_meanflow_avg_loop.sh                 # 3 ROMS runs + CMEMS
 #   sbatch --array=3 julia_meanflow_avg_loop.sh       # only CMEMS
 

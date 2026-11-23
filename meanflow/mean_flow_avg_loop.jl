@@ -1,6 +1,7 @@
 #= mean_flow_avg_loop.jl
 Hsin-Yi Chen, USM DMS
-Monthly and half-monthly mean surface flow for three ROMS runs and the three parent models, in one loop.
+Monthly and half-monthly means (full 3-D fields + surface maps) for three ROMS runs and the three parent models,
+in one loop.
 Same method as mean_flow_avg.jl (running sums, every file read once), extended to
   - two averaging windows:  monthly      one bin per calendar month
                             halfmonthly  days 1-15 and 16-end of each month
@@ -20,10 +21,19 @@ Same method as mean_flow_avg.jl (running sums, every file read once), extended t
   Only records in [T0, T1) are used (default Aug 1 - Dec 1 2022), so the calendar bins line up across sources;
   a bin a source only partly covers shows its own day count in the panel title.
 
-Sums and counts are kept per grid point (Float64 sum, Int32 count), and only finite values are added, so
-NaN land / fill (~1e37) in the parent files never enters a mean. ROMS land (stored as 0) -> NaN by mask_rho/u/v.
+Running sums are kept per grid point and per half-month only (Float64 sum, UInt16 count of finite values);
+a month = its two halves, total = all halves (sum of sums / sum of counts, so exactly the same as averaging the
+records directly). NaN land / below-bottom / fill (~1e37) in the parent files never enters a mean; ROMS land
+(stored as 0) -> NaN by mask_rho/u/v. Variables are done one at a time (peak memory ~ 10 B x 3-D field x halves:
+~3.5 GB 2700 m runs, ~2.5 GB 900 m run, ~7 GB NCOM).
+3-D = every native level: ROMS s-levels (s_rho, bottom -> top; z from zlevs3 with h, mean zeta and the
+vertical-coordinate attributes copied from roms_avg), HYCOM / CMEMS fixed depths (depth), NCOM layers (mean
+layer thickness lthick per bin, from the daily <tag>_lthick.nc). MF_3D=0: surface only (fast, as before).
 
 Output per source (paths per machine, see P below):
+  OUT_DIR/<src>_meanflow_avg_3d.nc              all bins, native grids: zeta, u, v, temp, salt (+ lthick for NCOM);
+                                                  ROMS u / v on their own u / v points along xi / eta (not rotated),
+                                                  parent u / v east / north
   OUT_DIR/<src>_meanflow_avg.nc                         all bins: zeta, u_east, v_north, temp, salt on rho points,
                                                   lon, lat, bin name / start / end / record count
   FIG_ROOT/<src>/mean_flow/<window>/<view>/meanflow_avg_surf_<field>.png   (ssh, temp, salt, speed)
@@ -103,7 +113,8 @@ const WINDOWS  = split(get(ENV, "MF_WIN", "monthly,halfmonthly"), ",")
 const T0       = DateTime(get(ENV, "MF_T0", "2022-08-01"))   # records used: T0 <= t < T1
 const T1       = DateTime(get(ENV, "MF_T1", "2022-12-01"))
 const t_ref    = DateTime(1994, 1, 1)                  # ROMS ocean_time reference
-const VARS     = ["zeta", "u", "v", "temp", "salt"]    # surface fields
+const VARS     = ["zeta", "u", "v", "temp", "salt"]    # fields averaged (NCOM 3-D: + lthick)
+const FULL3D   = get(ENV, "MF_3D", "1") != "0"         # false: surface level only, no 3-D file
 const OUT_DIR  = get(ENV, "MF_OUTDIR", P.out)          # means NetCDF
 const FIG_ROOT = get(ENV, "MF_FIGROOT", P.fig)         # figures in FIG_ROOT/<src>/mean_flow/...
 const CHECK_DIR = haskey(ENV, "MF_NOCHECK") ? nothing : P.check   # copy of every figure; nothing = no copies
@@ -126,27 +137,40 @@ function all_bins()
     return bins
 end
 
-## --- accumulation
-mutable struct Acc
-    S::Array{Float64, 3}; C::Array{Int32, 3}       # per point sum and count, (x, y, bin)
-    nrec::Vector{Int}                               # records added per bin
-    tfirst::Vector{DateTime}; tlast::Vector{DateTime}
+## --- accumulation: one running sum per half-month; months and total are combined from the halves
+mutable struct Half{N}
+    S::Array{Float64, N}; C::Array{UInt16, N}      # per point sum and count of finite values
+    nrec::Int; tfirst::DateTime; tlast::DateTime
 end
-Acc(nx, ny, nb) = Acc(zeros(nx, ny, nb), zeros(Int32, nx, ny, nb), zeros(Int, nb),
-                      fill(typemax(DateTime), nb), fill(typemin(DateTime), nb))
+Half(sz, t) = Half(zeros(sz...), zeros(UInt16, sz...), 0, t, t)
+halfkey(t) = (year(t), month(t), day(t) <= 15 ? 1 : 2)
+halfstart(k) = DateTime(k[1], k[2], k[3] == 1 ? 1 : 16)
 
-function addrec!(a::Acc, x::AbstractMatrix, t::DateTime, bins)
-    for b in eachindex(bins)
-        bins[b].t0 <= t < bins[b].t1 || continue
-        S = view(a.S, :, :, b); C = view(a.C, :, :, b)
-        @inbounds for I in CartesianIndices(x)
-            xi = x[I]
-            if isfinite(xi) && abs(xi) < 1f30
-                S[I] += xi; C[I] += 1
-            end
+function addrec!(h::Half, x::AbstractArray, t::DateTime)
+    S, C = h.S, h.C
+    @inbounds for I in eachindex(S, x)
+        xi = x[I]
+        if isfinite(xi) && abs(xi) < 1f30
+            S[I] += xi; C[I] += 0x0001
         end
-        a.nrec[b] += 1; a.tfirst[b] = min(a.tfirst[b], t); a.tlast[b] = max(a.tlast[b], t)
     end
+    h.nrec += 1; h.tfirst = min(h.tfirst, t); h.tlast = max(h.tlast, t)
+end
+
+# halves that make up bin b (a half lies wholly inside its month)
+members(halves, b) = [h for (k, h) in sort(collect(halves); by = first)
+                      if b.kind == :total || b.t0 <= halfstart(k) < b.t1]
+
+function combine(hs)                                   # mean over all records of the halves hs
+    S = copy(hs[1].S); C = Int32.(hs[1].C)
+    for h in hs[2:end]; S .+= h.S; C .+= h.C; end
+    return Float32.(S ./ C)                            # count 0 -> NaN
+end
+
+function masknan!(m, mk)                               # ROMS land -> NaN, on every level
+    land = mk .== 0
+    for k in 1:size(m, 3); view(m, :, :, k)[land] .= NaN32; end
+    return m
 end
 
 # f(times, x) for every block of records of variable v; x is (x, y, record), times in [T0, T1)
@@ -156,16 +180,16 @@ function roms_blocks(f, src, v, st)
     for (fi, recs) in st.byfile
         kr = minimum(first.(recs)):maximum(first.(recs))
         x = NCDataset(joinpath(src.data, st.td.files[fi])) do ds
-            v == "zeta" ? ds[v].var[:, :, kr] : ds[v].var[:, :, st.N, kr]
+            v == "zeta" ? ds[v].var[:, :, kr] : ds[v].var[:, :, st.lev, kr]
         end
         ks = first.(recs) .- first(kr) .+ 1
-        f(st.tmid[last.(recs)], view(x, :, :, ks))
+        f(st.tmid[last.(recs)], selectdim(x, ndims(x), ks))
     end
 end
 
 const CM_VAR = Dict("zeta" => ("zos", "zos"), "u" => ("uv", "uo"), "v" => ("uv", "vo"),
                     "temp" => ("temp", "thetao"), "salt" => ("salt", "so"))
-function cmems_blocks(f, src, v, st; nblock = 48)
+function cmems_blocks(f, src, v, st; nblock = FULL3D ? 8 : 48)
     key, name = CM_VAR[v]
     file = only(filter(n -> startswith(n, "cmems_$(key)_") && endswith(n, ".nc"), readdir(src.data)))
     NCDataset(joinpath(src.data, file)) do ds
@@ -173,28 +197,30 @@ function cmems_blocks(f, src, v, st; nblock = 48)
         ks = findall(inwin, t)
         for r in Iterators.partition(ks, nblock)                    # ks contiguous (time sorted)
             kr = first(r):last(r)
-            f(t[kr], coalesce.(ds[name][:, :, 1, kr], NaN32))         # (lon, lat, depth, time), surface level
+            x = v == "zeta" ? ds[name][:, :, 1, kr] : ds[name][:, :, st.lev, kr]   # (lon, lat, depth, time)
+            f(t[kr], coalesce.(x, NaN32))
         end
     end
 end
 
 const HN_VAR = Dict("zeta" => ("ssh", "ssh", false), "u" => ("uv", "u_velocity", true), "v" => ("uv", "v_velocity", true),
-                    "temp" => ("ts", "layer_temperature", true), "salt" => ("ts", "layer_salinity", true))
+                    "temp" => ("ts", "layer_temperature", true), "salt" => ("ts", "layer_salinity", true),
+                    "lthick" => ("lthick", "layer_thickness", true))      # NCOM only; one record per file, no MT
 mt2datetime(mt) = round(DateTime(1900, 12, 31) + Millisecond(round(Int, mt * 86_400_000)), Minute(1))   # MT: days since 1900-12-31
 hn_tags(src, suf) = sort([chopsuffix(n, "_$suf.nc") for n in readdir(src.data)
                           if startswith(n, src.prefix) && endswith(n, "_$suf.nc")])
-function hn_blocks(f, src, v, st)
+function hn_blocks(f, src, v, st)                     # one record at a time (an NCOM 3-D record is ~0.7 GB)
     suf, name, has_z = HN_VAR[v]
     seen = Set{DateTime}()
     for tag in hn_tags(src, suf)
         NCDataset(joinpath(src.data, "$(tag)_$suf.nc")) do ds
-            t  = mt2datetime.(ds["MT"].var[:])
-            ks = findall(k -> inwin(t[k]) && !(t[k] in seen), eachindex(t))
-            isempty(ks) && return
-            kr = minimum(ks):maximum(ks)
-            x  = has_z ? ds[name].var[:, :, 1, kr] : ds[name].var[:, :, kr]
-            union!(seen, t[ks])
-            f(t[ks], view(x, :, :, ks .- first(kr) .+ 1))
+            t = haskey(ds, "MT") ? mt2datetime.(ds["MT"].var[:]) : [DateTime(tag[end-9:end], "yyyymmddHH")]
+            for k in eachindex(t)
+                (inwin(t[k]) && !(t[k] in seen)) || continue
+                x = has_z ? ds[name].var[:, :, st.lev, k:k] : ds[name].var[:, :, k:k]
+                push!(seen, t[k])
+                f(t[k:k], x)
+            end
         end
     end
 end
@@ -210,7 +236,10 @@ function load_source(src)
             g["lon_rho"][:, :], g["lat_rho"][:, :], g["h"][:, :], g["mask_rho"][:, :], g["angle"][:, :]
         end
         td = time_dir(src.data; prefix = "roms_avg.", dt = src.dt, t_ref, tstart = T0 - Day(1), tend = T1 + Day(1))   # exact cut by tmid below
-        N  = NCDataset(ds -> ds.dim["s_rho"], joinpath(src.data, td.files[1]))
+        N, gatt = NCDataset(joinpath(src.data, td.files[1])) do ds
+            ds.dim["s_rho"], Dict(k => v for (k, v) in ds.attrib)       # theta_s, theta_b, ... for zlevs3
+        end
+        lev = FULL3D ? (1:N) : (N:N)                                    # s-levels read; surface = last
         byfile = records_by_file(td)
         tmid = Vector{DateTime}(undef, td.nt)                        # centre time of each average
         for (fi, recs) in byfile
@@ -218,20 +247,30 @@ function load_source(src)
             for (k, n) in recs; tmid[n] = t_ref + Millisecond(round(Int, 1000 * t[k])); end
         end
         mask_u, mask_v = uvp_masks(mask_rho)
-        sz = Dict("zeta" => size(mask_rho), "temp" => size(mask_rho), "salt" => size(mask_rho),
-                  "u" => size(mask_u), "v" => size(mask_v))
-        return (; lon = lon180.(lon), lat, h, angle, mask_rho, mask_u, mask_v, sz, td, N, byfile, tmid)
+        nl = length(lev)
+        sz = Dict("zeta" => size(mask_rho), "temp" => (size(mask_rho)..., nl), "salt" => (size(mask_rho)..., nl),
+                  "u" => (size(mask_u)..., nl), "v" => (size(mask_v)..., nl))
+        return (; lon = lon180.(lon), lat, h, angle, mask_rho, mask_u, mask_v, sz, td, N, lev, isurf = nl,
+                gatt, byfile, tmid)
     elseif src.kind == :cmems
         f = only(filter(n -> startswith(n, "cmems_uv_"), readdir(src.data)))
         lo, la = NCDataset(ds -> (Float64.(ds["longitude"][:]), Float64.(ds["latitude"][:])), joinpath(src.data, f))
         lon = repeat(lon180.(lo), 1, length(la)); lat = repeat(la', length(lo), 1)
+        depth = NCDataset(ds -> Float64.(ds["depth"][:]), joinpath(src.data, f))
     else
         gsuf = src.kind == :hycom ? "grd" : "lthick"                 # NCOM lon/lat live in the layer-thickness files
         lon, lat = NCDataset(ds -> (ds["Longitude"].var[:, :], ds["Latitude"].var[:, :]),
                              joinpath(src.data, "$(first(hn_tags(src, gsuf)))_$gsuf.nc"))
         lon = lon180.(lon)
+        depth = src.kind == :hycom ?                                    # NCOM: layers, see lthick
+            NCDataset(ds -> ds["depth"].var[:], joinpath(src.data, "$(first(hn_tags(src, "grd")))_grd.nc")) : nothing
     end
-    return (; lon, lat, sz = Dict(v => size(lon) for v in VARS))
+    nz  = NCDataset(ds -> ds.dim[src.kind == :cmems ? "depth" : "z"],
+                    joinpath(src.data, src.kind == :cmems ? only(filter(n -> startswith(n, "cmems_uv_"), readdir(src.data))) :
+                                                            "$(first(hn_tags(src, "uv")))_uv.nc"))
+    lev = FULL3D ? (1:nz) : (1:1)                                        # surface = first
+    sz  = Dict(v => v == "zeta" ? size(lon) : (size(lon)..., length(lev)) for v in [VARS; "lthick"])
+    return (; lon, lat, sz, lev, isurf = 1, depth)
 end
 
 # mean grid spacing [km] (along the first index)
@@ -309,6 +348,54 @@ function mean_map(F, uv, field, view, M; title, label, colormap, colorrange, uv_
     empty!(fig); GC.gc()
 end
 
+## --- 3-D output file
+function open3d(name, src, st, bins, keep)
+    mkpath(OUT_DIR)
+    ds = NCDataset(joinpath(OUT_DIR, "$(name)_meanflow_avg_3d.nc"), "c")
+    nx, ny = size(st.lon); nl = length(st.lev)
+    if src.kind == :roms
+        defDim(ds, "xi_rho", nx); defDim(ds, "eta_rho", ny); defDim(ds, "xi_u", nx - 1); defDim(ds, "eta_v", ny - 1)
+        defDim(ds, "s_rho", nl)
+        for (k, v) in st.gatt; ds.attrib["roms_" * k] = v; end        # theta_s, theta_b, grid_file, ...
+        ds.attrib["vertical"] = "ROMS s-levels 1 (bottom) .. $nl (top); z from zlevs3(h, zeta, theta_s, theta_b, hc, N, ...)"
+        defVar(ds, "lon_rho", st.lon, ("xi_rho", "eta_rho")); defVar(ds, "lat_rho", st.lat, ("xi_rho", "eta_rho"))
+        defVar(ds, "h", st.h, ("xi_rho", "eta_rho")); defVar(ds, "mask_rho", st.mask_rho, ("xi_rho", "eta_rho"))
+        defVar(ds, "angle", st.angle, ("xi_rho", "eta_rho"))
+    else
+        defDim(ds, "x", nx); defDim(ds, "y", ny); defDim(ds, "z", nl)
+        defVar(ds, "lon", st.lon, ("x", "y")); defVar(ds, "lat", st.lat, ("x", "y"))
+        if st.depth === nothing
+            ds.attrib["vertical"] = "NCOM layers 1 (top) .. $nl; layer thickness: lthick (mean per bin)"
+        else
+            ds.attrib["vertical"] = "fixed depths, level 1 = top"
+            defVar(ds, "depth", Float64.(st.depth[st.lev]), ("z",); attrib = ["units" => "m", "positive" => "down"])
+        end
+    end
+    ds.attrib["source"] = "$name: $(src.what), $(src.data)"
+    ds.attrib["method"] = "mean of all records in [bin_start, bin_end) at every point; NaN = land / no data"
+    defDim(ds, "bin", length(keep))
+    defVar(ds, "bin_name", getfield.(bins[keep], :name), ("bin",))
+    defVar(ds, "bin_kind", string.(getfield.(bins[keep], :kind)), ("bin",))
+    defVar(ds, "bin_start", getfield.(bins[keep], :t0), ("bin",))
+    defVar(ds, "bin_end", getfield.(bins[keep], :t1), ("bin",))
+    return ds
+end
+
+const UNITS = Dict("zeta" => "m", "u" => "m s-1", "v" => "m s-1", "temp" => "degC", "salt" => "psu", "lthick" => "m")
+function write3d!(ds, v, m, ib)
+    if !haskey(ds, v)
+        roms = haskey(ds.dim, "xi_rho")
+        h2 = roms ? (v == "u" ? ("xi_u", "eta_rho") : v == "v" ? ("xi_rho", "eta_v") : ("xi_rho", "eta_rho")) : ("x", "y")
+        dims = ndims(m) == 2 ? (h2..., "bin") : (h2..., roms ? "s_rho" : "z", "bin")
+        defVar(ds, v, Float32, dims; fillvalue = NaN32, deflatelevel = 1, shuffle = true,
+               chunksizes = (size(m, 1), size(m, 2), ntuple(_ -> 1, length(dims) - 2)...),
+               attrib = ["units" => UNITS[v],
+                         "note" => roms && v in ("u", "v") ? "ROMS grid-relative (xi / eta) component on its own points" :
+                                   v in ("u", "v") ? "east / north component" : ""])
+    end
+    ds[v].var[ntuple(_ -> Colon(), ndims(m))..., ib] = m
+end
+
 ## --- loop over sources
 for name in SRC_RUN
     src = Dict(SOURCES)[name]
@@ -320,36 +407,57 @@ for name in SRC_RUN
     st = load_source(src)
     bins = all_bins(); nb = length(bins)
 
-    # Section 2: sums and counts, variable by variable, block by block
-    # each variable: sums -> mean right away (Float64 sums freed before the next variable)
-    means = Dict{String, Array{Float32, 3}}()
-    local nrec, tfirst, tlast
-    for v in VARS
-        a = Acc(st.sz[v]..., nb)
+    # Section 2: half-month sums, variable by variable; months / total from the halves; 3-D file + surface slices
+    vlist = src.kind == :ncom && FULL3D ? [VARS; "lthick"] : VARS
+    means = Dict{String, Array{Float32, 3}}()                           # surface (x, y, bin), all bins
+    nrec = zeros(Int, nb); tfirst = fill(T0, nb); tlast = fill(T0, nb)
+    keep = Int[]
+    nc3 = nothing
+    for v in vlist
+        halves = Dict{NTuple{3, Int}, Half}()
         blocks(src, v, st) do times, x
             for k in eachindex(times)
-                inwin(times[k]) && addrec!(a, view(x, :, :, k), times[k], bins)
+                t = times[k]; inwin(t) || continue
+                h = get!(() -> Half(st.sz[v], t), halves, halfkey(t))
+                addrec!(h, selectdim(x, ndims(x), k), t)
             end
         end
-        m = Float32.(a.S ./ a.C)                                        # count 0 -> NaN
-        if src.kind == :roms                                            # ROMS land -> NaN
-            mk = v == "u" ? st.mask_u : v == "v" ? st.mask_v : st.mask_rho
-            m[findall(mk .== 0), :] .= NaN32
+        isempty(halves) && error("$name: no $v records in [$T0, $T1)")
+        if v == first(vlist)                                            # bins with data (from zeta)
+            keep = [b for b in eachindex(bins) if !isempty(members(halves, bins[b]))]
+            FULL3D && (nc3 = open3d(name, src, st, bins, keep))
         end
-        means[v] = m
-        v == "u" && ((nrec, tfirst, tlast) = (a.nrec, a.tfirst, a.tlast))
-        @printf("  %-4s %6d records, %.1f min\n", v, a.nrec[end], (time() - t0) / 60)
-        a = nothing; GC.gc()
+        surf = fill(NaN32, size(st.lon)..., nb)
+        for (ib, b) in enumerate(keep)
+            hs = members(halves, bins[b]); isempty(hs) && continue
+            m = combine(hs)
+            src.kind == :roms && masknan!(m, v == "u" ? st.mask_u : v == "v" ? st.mask_v : st.mask_rho)
+            nc3 === nothing || write3d!(nc3, v, m, ib)
+            ms = ndims(m) == 2 ? m : view(m, :, :, st.isurf)
+            if src.kind == :roms && v in ("u", "v")                     # to rho points for the maps
+                ms = v == "u" ? u2rho(ms) : v2rho(ms)
+            end
+            v in VARS && (surf[:, :, b] = ms)
+            if v == "u"
+                nrec[b] = sum(h.nrec for h in hs)
+                tfirst[b] = minimum(h.tfirst for h in hs); tlast[b] = maximum(h.tlast for h in hs)
+            end
+        end
+        v in VARS && (means[v] = surf)
+        @printf("  %-6s %6d records, %.1f min\n", v, sum(h.nrec for h in values(halves)), (time() - t0) / 60)
+        halves = nothing; GC.gc()
+    end
+    if nc3 !== nothing
+        close(nc3); println("  saved ", joinpath(OUT_DIR, "$(name)_meanflow_avg_3d.nc"))
     end
     # u, v -> rho points, east / north
-    if src.kind == :roms
-        u_r = u2rho(means["u"]); v_r = v2rho(means["v"])
+    if src.kind == :roms                                                # already on rho points
+        u_r = means["u"]; v_r = means["v"]
         means["u"] = u_r .* cos.(st.angle) .- v_r .* sin.(st.angle)
         means["v"] = u_r .* sin.(st.angle) .+ v_r .* cos.(st.angle)
     end
     spd = sqrt.(means["u"] .^ 2 .+ means["v"] .^ 2)
 
-    keep = findall(>(0), nrec)
     for b in keep
         @printf("  %-9s %-11s %5d recs  %s .. %s   ssh %7.3f  u %7.3f  v %7.3f  T %6.2f  S %6.2f (domain mean)\n",
                 bins[b].name, bins[b].kind, nrec[b], tfirst[b], tlast[b],
