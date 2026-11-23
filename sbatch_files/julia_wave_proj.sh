@@ -15,6 +15,7 @@
 #   sbatch julia_wave_proj.sh                 # windows 1-10
 #   sbatch --array=1 julia_wave_proj.sh       # window 1 only (test)
 
+set -o pipefail   # a julia error fails the job (tee alone would hide it)
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 export WMF_VARS=zeta WMF_STEPS=5 WMF_WINDOWS=$SLURM_ARRAY_TASK_ID
 cd /home/hchen54/internalwave_julia

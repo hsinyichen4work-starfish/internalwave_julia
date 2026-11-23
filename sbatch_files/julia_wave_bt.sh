@@ -15,6 +15,7 @@
 #   sbatch julia_wave_bt.sh                                    # u, v, p
 #   sbatch --dependency=afterok:<bands job id> julia_wave_bt.sh  # start when steps 5-6 are done
 
+set -o pipefail   # a julia error fails the job (tee alone would hide it)
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 FIELDS=(u v p)
 export WMF_VARS=zeta WMF_STEPS=7 WMF_BT_FIELDS=${FIELDS[$SLURM_ARRAY_TASK_ID]}

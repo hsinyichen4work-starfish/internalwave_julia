@@ -46,7 +46,7 @@ function window_bt(win, data_folder, mean_root; field, grid_file, bands = BANDS,
     t0 = time()
     for (b, w) in todo
         rs = recs_of[w]; fo = fwin(nout(b), w)
-        rm(fo * ".tmp"; force = true)
+        mkpath(dirname(fo)); rm(fo * ".tmp"; force = true)
         din = NCDataset(fwin(nin(b), w)); dz = field == "p" ? NCDataset(fwin(nz(b), w)) : nothing
         try
             NCDataset(fo * ".tmp", "c"; attrib = ["title" => "$(nout(b)): barotropic (depth-mean) part of $(nin(b))" *

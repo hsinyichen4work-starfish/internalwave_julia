@@ -40,6 +40,7 @@ include("/home/hchen54/internalwave_julia/wave_meanflow/wave_perturb.jl")      #
 include("/home/hchen54/internalwave_julia/wave_meanflow/mode_projection.jl")   # s_stretch; window_project (later step: mode projections)
 include("/home/hchen54/internalwave_julia/wave_meanflow/wave_bands.jl")        # steps 5-6: rho/u/v/zeta_wave -> hp28, bp9_15, hp9 bands
 include("/home/hchen54/internalwave_julia/wave_meanflow/barotropic.jl")        # step 7: u_bt, v_bt, p_bt per band
+include("/home/hchen54/internalwave_julia/wave_meanflow/baroclinic_modes.jl")  # steps 8-9: u_bc = u_wave − u_bt -> u_n, v_n, p_n
 
 # ============================================================================
 # (0) directories
@@ -104,10 +105,11 @@ println("$(win.nwin) windows")
 # WMF_WINDOWS = "1:3" or "5" runs only those windows (e.g. split between jobs); default all
 const WINDOWS  = haskey(ENV, "WMF_WINDOWS") ? vec(collect(eval(Meta.parse(ENV["WMF_WINDOWS"])))) : collect(1:win.nwin)
 const mean_root = joinpath(out_dir, @sprintf("L%gh_ov%.2f", WINDOW_LENGTH, WINDOW_OVERLAP))   # one folder per variable
-# WMF_STEPS = "2,5" runs only those sections (2 means, 3 B/N², 4 modes, 5-6 wave parts + bands, 7 barotropic part);
+# WMF_STEPS = "2,5" runs only those sections (2 means, 3 B/N², 4 modes, 5-6 wave parts + bands, 7 barotropic part,
+# 8-9 baroclinic part -> modal amplitudes);
 # default all.
 # Batch: the per-variable array runs "2" (each task its own variable), then "3,4" and "5" (per variable) after it.
-const STEPS = parse.(Int, split(get(ENV, "WMF_STEPS", "2,3,4,5,7"), ","))
+const STEPS = parse.(Int, split(get(ENV, "WMF_STEPS", "2,3,4,5,7,9"), ","))
 2 in STEPS && (mean_files = window_means(win, data_folder, mean_root, VARS; windows = WINDOWS, grid_file))   # done windows skipped
 
 # ============================================================================
@@ -154,4 +156,26 @@ end
 const BT_FIELDS = String.(split(get(ENV, "WMF_BT_FIELDS", "u,v,p"), ","))
 if 7 in STEPS
     bt_files = Dict(f => window_bt(win, data_folder, mean_root; field = f, grid_file) for f in BT_FIELDS)
+end
+
+# ============================================================================
+# (8) baroclinic part of each band: u_bc = u_wave − u_bt, v_bc = v_wave − v_bt,
+#     p_bc = (p_wave + ρ0 g zeta_wave) − p_bt = p_wave − depth mean of p_wave (baroclinic_modes.jl)
+# ============================================================================
+# bc_record!: computed record by record inside step 9, not saved (would be ~630 GB). (1/H) ∫ u_bc dz = 0.
+# The total wave pressure is p_wave + ρ0 g zeta_wave; p_bt is its depth mean, so the surface term cancels in p_bc.
+
+# ============================================================================
+# (9) projection of the baroclinic part on the modes of step 4 (baroclinic_modes.jl)
+# ============================================================================
+# u_n, v_n, p_n = (1/H) ∫ (u, v, p)_bc φn dz, n = 1..NMODE, every hourly record, per band, with the window's φn and
+# the record's Hz, H; u_bc, v_bc moved to rho points first. -> mean_root/<f>_n_<band>/ (xi_rho, eta_rho, mode, time)
+# plus <f>_nvar / <f>_bcvar: share of the baroclinic variance held by each mode. Flux of mode n = H p_n u_n.
+# WMF_MODAL_FIELDS = "u,v,p" and WMF_MODAL_BANDS = "hp28,bp9_15,hp9" (defaults; batch: one field x band per task)
+const MODAL_FIELDS = String.(split(get(ENV, "WMF_MODAL_FIELDS", "u,v,p"), ","))
+const MODAL_BANDS  = [b for b in BANDS if b.name in split(get(ENV, "WMF_MODAL_BANDS", "hp28,bp9_15,hp9"), ",")]
+if 9 in STEPS
+    modal_files = Dict("$(f)_n_$(b.name)" => window_modal(win, data_folder, mean_root; field = f, band = b, grid_file,
+                                                         nmode = NMODE, windows = WINDOWS)
+                       for f in MODAL_FIELDS for b in MODAL_BANDS)
 end

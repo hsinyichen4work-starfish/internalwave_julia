@@ -18,6 +18,7 @@
 #   sbatch --array=0 --export=ALL,WMF_STEPS=3,4 --mem=16G julia_wave_meanflow.sh   # sections 3-4 afterwards
 #          (add --dependency=afterok:<array job id> to start it when the array is done)
 
+set -o pipefail   # a julia error fails the job (tee alone would hide it)
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 VARS=(zeta ubar vbar u v w temp salt rho)
 export WMF_VARS=${VARS[$SLURM_ARRAY_TASK_ID]}
