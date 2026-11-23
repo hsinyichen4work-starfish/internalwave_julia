@@ -517,3 +517,7 @@ plot_timeseries((S, V, b, m) -> V[b][m], ["absρ", "θ", "absg"],
                 m -> Dict("absρ" => "|ρ|", "θ" => "θ (°, ccw)", "absg" => "|g|")[m],
                 "Complex correlation of the mean surface velocity (Kundu 1976) with HYCOM and with GLORYS\nmean surface fields on the ROMS 2700m grid, Sep–Nov 2022",
                 "timeseries_vector_correlation.png")
+
+
+
+###========mooring loc / transect comp=============
