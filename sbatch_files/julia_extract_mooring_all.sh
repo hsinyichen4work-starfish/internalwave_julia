@@ -18,6 +18,7 @@
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
 SRCS=(design_1113_hycom_2700 design_1116_cmems_2700 amazon_900m_dbry_0927 CMEMS)
 export MX_SRC=${SRCS[$SLURM_ARRAY_TASK_ID]}
+export MX_T0=${MX_T0:-2022-08-01} MX_T1=${MX_T1:-2022-12-01}   # same window as the mean-flow loop
 cd /home/hchen54/internalwave_julia
 mkdir -p log_files
 julia --project=. --heap-size-hint=8G model_validation/mooring/extract_mooring_all.jl 2>&1 | tee log_files/extract_mooring_all_${MX_SRC}.log
