@@ -26,7 +26,7 @@ function window_setup(data_folder, var; tstart, tend, window_length = 72, window
     # records in [tstart, tend): time_dir keeps both ends, so stop one record before tend
     td = time_dir(data_folder; prefix, t_ref, dt, tstart, tend = tend - Second(dt), verbose)
     NCDataset(joinpath(data_folder, td.files[td.TL[td.steps[1]][1]])) do ds
-        haskey(ds, var) || error("$var not in $(prefix)*.nc; variables: $(join(keys(ds), ", "))")
+        haskey(ds, his_name(var)) || error("$var not in $(prefix)*.nc; variables: $(join(keys(ds), ", "))")
     end
 
     L = round(Int, window_length * 3600 / dt)              # window length [records]
@@ -74,7 +74,8 @@ so a stopped run can be started again. `windows` lets several jobs split the win
 
 # Names of the window means (background fields): his variable -> saved name (folder, file prefix, variable in the file)
 #   u -> U, v -> V, w -> W, rho -> rho_window, zeta -> zeta_window; the others (temp, salt, ubar, vbar) keep the his name
-const MEAN_NAME = Dict("u" => "U", "v" => "V", "w" => "W", "rho" => "rho_window", "zeta" => "zeta_window")
+#   rhoi (in-situ density of the split EOS, insitu_rho.jl; computed from rho, temp, salt, zeta) -> rhoi_window
+const MEAN_NAME = Dict("u" => "U", "v" => "V", "w" => "W", "rho" => "rho_window", "zeta" => "zeta_window", "rhoi" => "rhoi_window")
 mean_name(var) = get(MEAN_NAME, var, var)
 
 window_file(out_dir, var, w, t0) = joinpath(out_dir, @sprintf("%s_win%03d_%s.nc", var, w, Dates.format(t0, "yyyymmddTHH")))
@@ -92,8 +93,10 @@ function window_mean(win, data_folder, out_dir; var = win.var, windows = 1:win.n
 
     # variable layout from the first file (Julia order: xi, eta[, s], time)
     dnames, sz, vt, vatt = NCDataset(joinpath(data_folder, td.files[td.TL[td.steps[1]][1]])) do ds
-        v = ds[var]
-        dimnames(v), size(v), eltype(v.var), [k => v.attrib[k] for k in ("long_name", "units") if haskey(v.attrib, k)]
+        v = ds[his_name(var)]
+        dimnames(v), size(v), eltype(v.var), var == "rhoi" ?
+            ["long_name" => "in-situ density anomaly of the split EOS (rho1 + qp1 dpth (1 - qp2 dpth))", "units" => "kilogram meter-3"] :
+            [k => v.attrib[k] for k in ("long_name", "units") if haskey(v.attrib, k)]
     end
     sp = sz[1:end-1]; blk = map(n -> 1:n, sp); cs = ntuple(_ -> Colon(), length(sp))
 
@@ -102,6 +105,14 @@ function window_mean(win, data_folder, out_dir; var = win.var, windows = 1:win.n
     gb = (prod(sp) * 4 * 4 + nopen * prod(sp) * 8) / 1e9
     verbose && @printf("%s %s: up to %d windows open, ~%.1f GB\n", var, sp, nopen, gb)
     gb > max_gb && error("needs ~$(round(gb, digits = 1)) GB (> max_gb = $max_gb): use a larger overlap step or tiles")
+
+    if var == "rhoi"                                             # in-situ density: h, z0 of the rho grid, rho0
+        grid_file === nothing && error("rhoi needs grid_file (h)")
+        his1 = joinpath(data_folder, td.files[1])
+        hr = NCDataset(g -> Float64.(g["h"].var[:, :]), grid_file)
+        z0r = s_stretch(his1, hr)[1]; rho0 = NCDataset(d -> Float64(d.attrib["rho0"]), his1)
+        rbuf = Array{vt}(undef, sp...)
+    end
 
     land = nothing
     if grid_file !== nothing                                     # land points of the variable's grid
@@ -118,10 +129,15 @@ function window_mean(win, data_folder, out_dir; var = win.var, windows = 1:win.n
         recs = filter(r -> need[r[2]], recs)
         isempty(recs) && continue
         ks = first.(recs); kr = minimum(ks):maximum(ks)
-        z = get!(() -> Array{vt}(undef, sp..., length(kr)), bufs, length(kr))
-        NCDataset(ds -> NCDatasets.load!(ds[var].var, z, blk..., kr), joinpath(data_folder, td.files[fi]))
+        z = var == "rhoi" ? nothing : get!(() -> Array{vt}(undef, sp..., length(kr)), bufs, length(kr))
+        if var == "rhoi"
+            zb, ζb = NCDataset(d -> (read_his_block(d, var, :, :, kr), d["zeta"].var[:, :, kr]), joinpath(data_folder, td.files[fi]))
+        else
+            NCDataset(ds -> NCDatasets.load!(ds[var].var, z, blk..., kr), joinpath(data_folder, td.files[fi]))
+        end
         for (k, n) in recs
-            rec = view(z, cs..., k - first(kr) + 1)
+            rec = var == "rhoi" ? record_of(zb, var, k - first(kr) + 1, rbuf, view(ζb, :, :, k - first(kr) + 1), hr, z0r, rho0) :
+                                  view(z, cs..., k - first(kr) + 1)
             for w in todo
                 n in win.idx[w] || continue
                 get!(() -> zeros(Float64, sp...), sums, w) .+= rec
@@ -187,7 +203,7 @@ Checks first that every variable is in the his files (before any long read); win
 --------------------------------------------------------------------------------------------------------------- =#
 function window_means(win, data_folder, mean_root, vars; windows = 1:win.nwin, grid_file = nothing, kw...)
     NCDataset(joinpath(data_folder, win.td.files[1])) do ds
-        miss = filter(v -> !haskey(ds, v), vars)
+        miss = filter(v -> !all(haskey(ds, x) for x in his_needs(v)), vars)
         isempty(miss) || error("not in the his files: $(join(miss, ", "))")
     end
     mean_files = Dict{String, Vector{String}}()

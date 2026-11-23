@@ -33,6 +33,7 @@ using NCDatasets, Printf, Statistics, Dates, GibbsSeaWater, DSP
 ENV["HDF5_USE_FILE_LOCKING"] = "FALSE"   # lustre: don't lock files that other jobs may be reading
 include("/home/hchen54/internalwave_julia/function/butter_filters.jl")   # bandpass_butter, lowhighpass_butter (Butterworth filtfilt)
 include("/home/hchen54/internalwave_julia/function/load_all_hpc.jl")   # time_dir, records_by_file, data_load, zlevs3, uvp_masks, rho2u/v, ...
+include("/home/hchen54/internalwave_julia/wave_meanflow/insitu_rho.jl")       # rhoi: in-situ density of the split EOS
 include("/home/hchen54/internalwave_julia/wave_meanflow/meanflow_window.jl")   # helpers of this analysis (background / wave split)
 include("/home/hchen54/internalwave_julia/wave_meanflow/buoyancy_n2.jl")       # buoyancy, n2_rho, n2_gsw, window_bn2
 include("/home/hchen54/internalwave_julia/wave_meanflow/getting_modes.jl")     # column_modes, all_modes, window_modes
@@ -74,7 +75,14 @@ const SPAN_END   = DateTime(2022, 10, 15)
 
 # background / wave split window
 # his variables to average, in one run (the windows are found once); WMF_VARS="u,v" runs only those
-const VARS = String.(split(get(ENV, "WMF_VARS", "zeta,ubar,vbar,u,v,w,temp,salt,rho"), ","))
+# rhoi = in-situ density anomaly of the model's split EOS (insitu_rho.jl), computed from rho, temp, salt, zeta
+const VARS = String.(split(get(ENV, "WMF_VARS", "zeta,ubar,vbar,u,v,w,temp,salt,rho,rhoi"), ","))
+# density behind p_wave (steps 5b-9): WMF_RHO = "insitu" (default: rhoi, what the model's pressure gradient uses) or
+# "rho1" (his rho alone, no compressible part: modal flux ~14% low in deep water, tests/test_insitu_rho.jl).
+# B, N2rho (step 3) always use rho1 (rho_window); N2 is TEOS-10.
+const RHO_EOS = get(ENV, "WMF_RHO", "insitu")
+RHO_EOS in ("insitu", "rho1") || error("WMF_RHO = $RHO_EOS: use insitu or rho1")
+const P_FROM = RHO_EOS == "insitu" ? "rhoi" : "rho"
 const WINDOW_LENGTH  = 24 * 3     # [h] window length (3 days)
 const WINDOW_OVERLAP = 0.0        # 0 = no overlap, 0.5 = half (2-day window moves 1 day), 1 = moves by one record
 
@@ -92,6 +100,7 @@ println("input    ", data_folder)
 println("grid     ", grid_file)
 println("output   ", out_dir)
 println("figures  ", fig_dir)
+println("density  ", RHO_EOS, " (p_wave from ", P_FROM, ")")
 
 # ============================================================================
 # (1) windows in the analysis span
@@ -140,12 +149,14 @@ const NMODE = parse(Int, get(ENV, "WMF_NMODE", "10"))  # number of modes kept (W
 # WMF_BACKGROUND = "interp" (default: linear in time between the window means at the window centres, no steps at window
 # edges) or "window" (the plain window mean U / V / rho_window / zeta_window; its steps every 3 days leak into the bands:
 # tile test, within 12 h of a window edge the error was ~35% of the hp9 rms, ~21% hp28, ~10% bp9_15)
-const BAND_VARS  = haskey(ENV, "WMF_BAND_VARS") ? String.(split(ENV["WMF_BAND_VARS"], ",")) : filter(in(("zeta", "rho", "u", "v")), VARS)
+# rho / rhoi: the one named by WMF_RHO also gives p_wave (5b); the default runs only that one (rhoi_wave + p_wave)
+const BAND_VARS  = haskey(ENV, "WMF_BAND_VARS") ? String.(split(ENV["WMF_BAND_VARS"], ",")) :
+                   filter(v -> v in ("zeta", "u", "v") || v == P_FROM, VARS)
 const BACKGROUND = get(ENV, "WMF_BACKGROUND", "interp")
 const FILT_ORDER = 4
 if 5 in STEPS || 6 in STEPS
     band_files = Dict(v => window_wave_bands(win, data_folder, mean_root; var = v, grid_file, order = FILT_ORDER,
-                                             background = BACKGROUND) for v in BAND_VARS)
+                                             background = BACKGROUND, p_from = P_FROM) for v in BAND_VARS)
 end
 
 # ============================================================================

@@ -15,12 +15,13 @@
 # run as one job after the array (WMF_STEPS=3,4). Finished windows are skipped, so any job can be resubmitted.
 #   sbatch julia_wave_meanflow.sh                                  # all nine variables, sections 2 + 5
 #   sbatch --array=3,4,8 julia_wave_meanflow.sh                    # only u, v, rho
+#   sbatch --array=9 --export=ALL,WMF_STEPS=2 julia_wave_meanflow.sh   # rhoi_window; then WMF_STEPS=5 (--mem=48G --time=12:00:00) for rhoi_wave + p_wave
 #   sbatch --array=0 --export=ALL,WMF_STEPS=3,4 --mem=16G julia_wave_meanflow.sh   # sections 3-4 afterwards
 #          (add --dependency=afterok:<array job id> to start it when the array is done)
 
 set -o pipefail   # a julia error fails the job (tee alone would hide it)
 export PATH=/home/hchen54/.juliaup/bin${PATH:+:${PATH}}
-VARS=(zeta ubar vbar u v w temp salt rho)
+VARS=(zeta ubar vbar u v w temp salt rho rhoi)   # 9 = rhoi: in-situ density (split EOS), for p_wave
 export WMF_VARS=${VARS[$SLURM_ARRAY_TASK_ID]}
 export WMF_STEPS=${WMF_STEPS:-2,5}
 cd /home/hchen54/internalwave_julia

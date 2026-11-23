@@ -47,12 +47,22 @@ Machines (auto-detected, or MF_HOST=expanse / aurelia):
   aurelia  HYCOM / NCOM on local disk (/home/hsinyi/roms_data); default MF_SRC = HYCOM,NCOM
   A source whose data folder is missing on this machine is skipped with a message.
 
+Depth maps (MF_DEPTHS, default "100,150,200,250"; "off" = none): the 3-D means of every bin are cut at those
+depths (linear in z per column; NaN where the water is shallower) -> temp, salt, u_east, v_north maps:
+  OUT_DIR/<src>_meanflow_avg_depths.nc          (x, y, depth, bin), same bins as the 3-D file
+  FIG_ROOT/<src>/mean_flow/<window>/depth_<d>m[_ncom]/meanflow_avg_<d>m_<field>.png   (temp, salt, speed + arrows)
+  Level depths: ROMS zlevs3(h, bin-mean zeta, theta_s, theta_b, hc, N, "r", "new2008") (hc from roms_his);
+  HYCOM / CMEMS fixed depths; NCOM centres of the bin-mean layer thickness. ROMS u, v -> rho, east / north.
+  Colour ranges per source and depth (1-99 %).
+  MF_DEPTH_ONLY=1: skip the averaging, only cut the existing OUT_DIR/<src>_meanflow_avg_3d.nc files.
+
 Usage:
   expanse:  sbatch sbatch_files/julia_meanflow_avg_loop.sh            # 3 runs + CMEMS, job array 0-3
             MF_SRC=CMEMS MF_WIN=halfmonthly julia --project=. meanflow/mean_flow_avg_loop.jl
   aurelia:  (copy this file to ~/Documents/Julia/meanflow/, then from ~/Documents/Julia)
             nohup julia --project=. meanflow/mean_flow_avg_loop.jl > meanflow_loop_parents.log 2>&1 &
             MF_SRC=NCOM julia --project=. meanflow/mean_flow_avg_loop.jl
+  depths:   MF_DEPTH_ONLY=1 julia --project=. meanflow/mean_flow_avg_loop.jl   # 3-D files already there
   test:     MF_T0=2022-09-14 MF_T1=2022-09-17 MF_OUTDIR=/tmp/x MF_FIGROOT=/tmp/x MF_NOCHECK=1 MF_SRC=HYCOM julia ...
 Expanse login node: 8 GB limit; use the batch job.
 =#
@@ -82,7 +92,7 @@ const P = HOST == "expanse" ? (
     error("MF_HOST = $HOST, not expanse / aurelia")
 println("host ", HOST)
 
-for f in ("fig_setup.jl", "uvp_masks.jl", "uv2rho.jl", "time_dir.jl",    # figkw, figsave, cm_to_pt; masks; u2rho; time_dir
+for f in ("fig_setup.jl", "uvp_masks.jl", "uv2rho.jl", "time_dir.jl", "zlevs3.jl",   # figkw, figsave, cm_to_pt; masks; u2rho; time_dir; zlevs3
           "plotting_fun.jl", "mooring_transect.jl")                        # CairoMakie, topdown_axis, *_curvilinear!; read_moorings
     include(joinpath(P.func, f))
 end
@@ -115,6 +125,10 @@ const T1       = DateTime(get(ENV, "MF_T1", "2022-12-01"))
 const t_ref    = DateTime(1994, 1, 1)                  # ROMS ocean_time reference
 const VARS     = ["zeta", "u", "v", "temp", "salt"]    # fields averaged (NCOM 3-D: + lthick)
 const FULL3D   = get(ENV, "MF_3D", "1") != "0"         # false: surface level only, no 3-D file
+const DEPTHS   = let d = get(ENV, "MF_DEPTHS", "100,150,200,250")   # depth maps [m]; "off" = none
+    d in ("", "0", "off") ? Float64[] : parse.(Float64, split(d, ","))
+end
+const DEPTH_ONLY = get(ENV, "MF_DEPTH_ONLY", "0") == "1"   # only cut existing 3-D files at DEPTHS
 const OUT_DIR  = get(ENV, "MF_OUTDIR", P.out)          # means NetCDF
 const FIG_ROOT = get(ENV, "MF_FIGROOT", P.fig)         # figures in FIG_ROOT/<src>/mean_flow/...
 const CHECK_DIR = haskey(ENV, "MF_NOCHECK") ? nothing : P.check   # copy of every figure; nothing = no copies
@@ -294,7 +308,8 @@ const G27 = NCDataset(GRID_2700) do g
     (lon = lo, lat = la, h = g["h"][:, :], edge = grid_boundary(lo, la))
 end
 
-function mean_map(F, uv, field, view, M; title, label, colormap, colorrange, uv_color = :black, lowclip = nothing)
+function mean_map(F, uv, field, view, M; title, label, colormap, colorrange, uv_color = :black, lowclip = nothing,
+                  tag = "surf")
     bins, sel = M.bins, M.sel
     nb   = length(sel)
     ncol = nb <= 5 ? 3 : 4
@@ -334,18 +349,166 @@ function mean_map(F, uv, field, view, M; title, label, colormap, colorrange, uv_
     end
     Colorbar(fig[1:nrow, ncol + 1], hm; label, vertical = true, height = Relative(nrow == 1 ? 0.9 : 0.6), width = 10)
     edge = M.parent ? "solid: ROMS 2700 m grid edge" : "solid: model grid edge"
-    note = @sprintf("%s, %s .. %s\ngrey line: 200 m isobath%s%s\narrows: mean surface velocity; red: moorings (★ french, ◆ M1–M4, ● CPIES1–9)",
+    note = @sprintf("%s, %s .. %s\ngrey line: 200 m isobath%s%s\narrows: mean %s velocity; red: moorings (★ french, ◆ M1–M4, ● CPIES1–9)",
                     M.what, Date(M.tfirst), Date(M.tlast), M.parent ? " (ROMS 2700 m grid)" : "",
-                    view.ncom ? "; $edge; dashed: NCOM domain" : M.parent ? "; $edge" : "")
+                    view.ncom ? "; $edge; dashed: NCOM domain" : M.parent ? "; $edge" : "", tag == "surf" ? "surface" : "$tag")
     Label(fig[nrow + 1, 1:ncol + 1], note; fontsize = 8, halign = :left, justification = :left, tellwidth = false)
     rowgap!(fig.layout, 4); colgap!(fig.layout, 4)
     resize_to_layout!(fig)
-    fname = "meanflow_avg_surf_$field.png"
+    fname = "meanflow_avg_$(tag)_$field.png"
     out = joinpath(mkpath(joinpath(FIG_ROOT, M.name, "mean_flow", M.window, view.sub)), fname)
     figsave(out, fig)
     CHECK_DIR === nothing || cp(out, joinpath(mkpath(CHECK_DIR), "$(M.name)_$(M.window)_$(view.name)_$fname"); force = true)
     println("saved ", out)
     empty!(fig); GC.gc()
+end
+
+## --- map context (moorings, outline, isobath source) and the two views of a sub-folder
+function map_ctx(src, st)
+    parent = src.kind != :roms
+    (moor = read_moorings(src.moor), parent,
+     hsrc = parent ? G27 : (lon = st.lon, lat = st.lat, h = st.h),
+     edge = parent ? G27.edge : grid_boundary(st.lon, st.lat))
+end
+map_views(ctx, st, sub) = [
+    (name = "domain", lonlim = extrema(ctx.parent ? G27.lon : st.lon), latlim = extrema(ctx.parent ? G27.lat : st.lat),
+     sub = sub, bg = ctx.parent ? :white : :gray80, ncom = false),
+    (name = "ncom", lonlim = (-57.39, -27.47), latlim = (-8.63, 21.37), sub = sub * "_ncom", bg = :white, ncom = true),
+]
+map_M(name, window, src, st, ctx, bins, keep, nrec, tfirst, tlast) =
+    (; name, window, bins, sel = [b for b in keep if bins[b].kind == Symbol(window) || bins[b].kind == :total],
+     nrec, dt = src.dt, what = src.what, lon = st.lon, lat = st.lat, hlon = ctx.hsrc.lon, hlat = ctx.hsrc.lat,
+     h = ctx.hsrc.h, edge = ctx.edge, moor = ctx.moor, parent = ctx.parent, dx = dx_km(st.lon, st.lat),
+     tfirst = tfirst[end], tlast = tlast[end])
+
+## --- depth maps from the 3-D means
+# record times of a source (u records), for the bin counts when the averaging is skipped
+function rec_times(src, st)
+    if src.kind == :roms
+        return filter(inwin, st.tmid)
+    elseif src.kind == :cmems
+        f = only(filter(n -> startswith(n, "cmems_uv_"), readdir(src.data)))
+        return NCDataset(ds -> filter(inwin, round.(ds["time"][:], Minute(1))), joinpath(src.data, f))
+    end
+    seen = Set{DateTime}()
+    for tag in hn_tags(src, "uv")
+        union!(seen, NCDataset(ds -> mt2datetime.(ds["MT"].var[:]), joinpath(src.data, "$(tag)_uv.nc")))
+    end
+    return sort(filter(inwin, collect(seen)))
+end
+function bin_counts(bins, times)
+    inb(b, t) = bins[b].kind == :total || bins[b].t0 <= t < bins[b].t1
+    nrec   = [count(t -> inb(b, t), times) for b in eachindex(bins)]
+    tfirst = [nrec[b] > 0 ? minimum(t for t in times if inb(b, t)) : T0 for b in eachindex(bins)]
+    tlast  = [nrec[b] > 0 ? maximum(t for t in times if inb(b, t)) : T0 for b in eachindex(bins)]
+    return nrec, tfirst, tlast
+end
+
+# F (nx, ny, nl) at depth zt (< 0); Z level depths (nx, ny, nl) or (nl,), any order along k
+function zslice(F, Z, zt)
+    out = fill(NaN32, size(F, 1), size(F, 2))
+    @inbounds for j in axes(F, 2), i in axes(F, 1)
+        for k in 1:size(F, 3) - 1                      # own loop: `break` must only leave this column
+            za = Z isa AbstractVector ? Z[k] : Z[i, j, k]; zb = Z isa AbstractVector ? Z[k+1] : Z[i, j, k+1]
+            ((za - zt) * (zb - zt) <= 0 && za != zb) || continue
+            fa, fb = F[i, j, k], F[i, j, k+1]
+            isfinite(fa) && isfinite(fb) && (out[i, j] = fa + (zt - za) / (zb - za) * (fb - fa))
+            break
+        end
+    end
+    return out
+end
+
+function roms_hc(src)                                  # hc is in roms_his, not in roms_avg
+    f = findfirst(n -> startswith(n, "roms_his.") && endswith(n, ".nc"), readdir(src.data))
+    f === nothing && (@warn "no roms_his in $(src.data): hc = 250 assumed"; return 250.0)
+    return NCDataset(ds -> Float64(ds.attrib["hc"]), joinpath(src.data, readdir(src.data)[f]))
+end
+
+function depth_section(name, src, st, bins, nrec, tfirst, tlast)
+    f3 = joinpath(OUT_DIR, "$(name)_meanflow_avg_3d.nc")
+    isfile(f3) || (@warn "$name: no 3-D file $f3, no depth maps"; return)
+    t0 = time()
+    nx, ny = size(st.lon); nd = length(DEPTHS); nb = length(bins)
+    D = Dict(v => fill(NaN32, nx, ny, nd, nb) for v in ("temp", "salt", "u", "v"))
+    keep = Int[]
+    NCDataset(f3) do ds
+        keep = [something(findfirst(b -> b.name == n && string(b.kind) == k, bins), 0)
+                for (n, k) in zip(ds["bin_name"][:], ds["bin_kind"][:])]
+        any(==(0), keep) && error("$f3: bins do not match all_bins() (other MF_T0 / MF_T1?)")
+        hc = src.kind == :roms ? roms_hc(src) : NaN
+        for (ib, b) in enumerate(keep)
+            if src.kind == :roms
+                zeta = Float64.(ds["zeta"].var[:, :, ib]); zeta[.!isfinite.(zeta)] .= 0
+                N = ds.dim["s_rho"]
+                Z = permutedims(zlevs3(st.h, zeta, ds.attrib["roms_theta_s"], ds.attrib["roms_theta_b"], hc, N,
+                                       "r", "new2008")[1], (2, 3, 1))
+                u = u2rho(ds["u"].var[:, :, :, ib]); v = v2rho(ds["v"].var[:, :, :, ib])
+            else
+                Z = if haskey(ds, "depth")
+                    -Float64.(ds["depth"][:])
+                else                                    # NCOM: centres of the mean layer thickness
+                    th = Float64.(ds["lthick"].var[:, :, :, ib]); th[.!isfinite.(th)] .= 0
+                    cs = cumsum(th; dims = 3); -(cs .- th ./ 2)
+                end
+                u = ds["u"].var[:, :, :, ib]; v = ds["v"].var[:, :, :, ib]
+            end
+            T = ds["temp"].var[:, :, :, ib]; S = ds["salt"].var[:, :, :, ib]
+            for (id, d) in enumerate(DEPTHS)
+                D["temp"][:, :, id, b] = zslice(T, Z, -d); D["salt"][:, :, id, b] = zslice(S, Z, -d)
+                us = zslice(u, Z, -d); vs = zslice(v, Z, -d)
+                if src.kind == :roms
+                    a = st.angle
+                    D["u"][:, :, id, b] = us .* cos.(a) .- vs .* sin.(a)
+                    D["v"][:, :, id, b] = us .* sin.(a) .+ vs .* cos.(a)
+                else
+                    D["u"][:, :, id, b] = us; D["v"][:, :, id, b] = vs
+                end
+            end
+            @printf("  depth maps %-9s %.1f min\n", bins[b].name, (time() - t0) / 60)
+            GC.gc()
+        end
+    end
+
+    out = joinpath(OUT_DIR, "$(name)_meanflow_avg_depths.nc")
+    NCDataset(out, "c") do ds
+        defDim(ds, "x", nx); defDim(ds, "y", ny); defDim(ds, "depth", nd); defDim(ds, "bin", length(keep))
+        ds.attrib["source"] = "$name: $(src.what); cut from $(basename(f3))"
+        ds.attrib["method"] = "bin means at fixed depths, linear in z per column; NaN = land / shallower than the depth"
+        defVar(ds, "lon", st.lon, ("x", "y")); defVar(ds, "lat", st.lat, ("x", "y"))
+        defVar(ds, "depth", DEPTHS, ("depth",); attrib = ["units" => "m", "positive" => "down"])
+        defVar(ds, "bin_name", getfield.(bins[keep], :name), ("bin",))
+        defVar(ds, "bin_kind", string.(getfield.(bins[keep], :kind)), ("bin",))
+        defVar(ds, "bin_start", getfield.(bins[keep], :t0), ("bin",))
+        defVar(ds, "bin_end", getfield.(bins[keep], :t1), ("bin",))
+        defVar(ds, "nrec", nrec[keep], ("bin",))
+        for (v, nm, u) in (("temp", "temp", "degC"), ("salt", "salt", "psu"), ("u", "u_east", "m s-1"), ("v", "v_north", "m s-1"))
+            defVar(ds, nm, D[v][:, :, :, keep], ("x", "y", "depth", "bin"); attrib = ["units" => u, "_FillValue" => NaN32])
+        end
+    end
+    println("  saved ", out)
+
+    ctx = map_ctx(src, st)
+    for (id, d) in enumerate(DEPTHS)
+        dn = @sprintf("%gm", d)
+        T = view(D["temp"], :, :, id, :); S = view(D["salt"], :, :, id, :)
+        U = view(D["u"], :, :, id, :); V = view(D["v"], :, :, id, :)
+        spd = sqrt.(U .^ 2 .+ V .^ 2)
+        trng = crange(T[:, :, keep]; step = 0.5); srng = crange(S[:, :, keep]; step = 0.1)
+        vrng = (0.0, max(0.2, crange(spd[:, :, keep]; q = (0.0, 0.99), step = 0.1)[2]))
+        for window in WINDOWS
+            M = map_M(name, window, src, st, ctx, bins, keep, nrec, tfirst, tlast)
+            for view in map_views(ctx, st, "depth_$dn")
+                mean_map(T, (U, V), "temp", view, M; tag = dn, title = "Mean temperature at $dn",
+                         label = "T [°C]", colormap = :thermal, colorrange = trng)
+                mean_map(S, (U, V), "salt", view, M; tag = dn, title = "Mean salinity at $dn",
+                         label = "S [psu]", colormap = :haline, colorrange = srng)
+                mean_map(spd, (U, V), "speed", view, M; tag = dn, title = "Mean speed |ū| and velocity at $dn",
+                         label = "speed [m s⁻¹]", colormap = :viridis, colorrange = vrng, uv_color = :white)
+            end
+        end
+    end
+    @printf("  depth maps done, %.1f min\n", (time() - t0) / 60)
 end
 
 ## --- 3-D output file
@@ -407,111 +570,107 @@ for name in SRC_RUN
     st = load_source(src)
     bins = all_bins(); nb = length(bins)
 
-    # Section 2: half-month sums, variable by variable; months / total from the halves; 3-D file + surface slices
-    vlist = src.kind == :ncom && FULL3D ? [VARS; "lthick"] : VARS
-    means = Dict{String, Array{Float32, 3}}()                           # surface (x, y, bin), all bins
-    nrec = zeros(Int, nb); tfirst = fill(T0, nb); tlast = fill(T0, nb)
-    keep = Int[]
-    nc3 = nothing
-    for v in vlist
-        halves = Dict{NTuple{3, Int}, Half}()
-        blocks(src, v, st) do times, x
-            for k in eachindex(times)
-                t = times[k]; inwin(t) || continue
-                h = get!(() -> Half(st.sz[v], t), halves, halfkey(t))
-                addrec!(h, selectdim(x, ndims(x), k), t)
+    if !DEPTH_ONLY
+        # Section 2: half-month sums, variable by variable; months / total from the halves; 3-D file + surface slices
+        vlist = src.kind == :ncom && FULL3D ? [VARS; "lthick"] : VARS
+        means = Dict{String, Array{Float32, 3}}()                           # surface (x, y, bin), all bins
+        nrec = zeros(Int, nb); tfirst = fill(T0, nb); tlast = fill(T0, nb)
+        keep = Int[]
+        nc3 = nothing
+        for v in vlist
+            halves = Dict{NTuple{3, Int}, Half}()
+            blocks(src, v, st) do times, x
+                for k in eachindex(times)
+                    t = times[k]; inwin(t) || continue
+                    h = get!(() -> Half(st.sz[v], t), halves, halfkey(t))
+                    addrec!(h, selectdim(x, ndims(x), k), t)
+                end
+            end
+            isempty(halves) && error("$name: no $v records in [$T0, $T1)")
+            if v == first(vlist)                                            # bins with data (from zeta)
+                keep = [b for b in eachindex(bins) if !isempty(members(halves, bins[b]))]
+                FULL3D && (nc3 = open3d(name, src, st, bins, keep))
+            end
+            surf = fill(NaN32, size(st.lon)..., nb)
+            for (ib, b) in enumerate(keep)
+                hs = members(halves, bins[b]); isempty(hs) && continue
+                m = combine(hs)
+                src.kind == :roms && masknan!(m, v == "u" ? st.mask_u : v == "v" ? st.mask_v : st.mask_rho)
+                nc3 === nothing || write3d!(nc3, v, m, ib)
+                ms = ndims(m) == 2 ? m : view(m, :, :, st.isurf)
+                if src.kind == :roms && v in ("u", "v")                     # to rho points for the maps
+                    ms = v == "u" ? u2rho(ms) : v2rho(ms)
+                end
+                v in VARS && (surf[:, :, b] = ms)
+                if v == "u"
+                    nrec[b] = sum(h.nrec for h in hs)
+                    tfirst[b] = minimum(h.tfirst for h in hs); tlast[b] = maximum(h.tlast for h in hs)
+                end
+            end
+            v in VARS && (means[v] = surf)
+            @printf("  %-6s %6d records, %.1f min\n", v, sum(h.nrec for h in values(halves)), (time() - t0) / 60)
+            halves = nothing; GC.gc()
+        end
+        if nc3 !== nothing
+            close(nc3); println("  saved ", joinpath(OUT_DIR, "$(name)_meanflow_avg_3d.nc"))
+        end
+        # u, v -> rho points, east / north
+        if src.kind == :roms                                                # already on rho points
+            u_r = means["u"]; v_r = means["v"]
+            means["u"] = u_r .* cos.(st.angle) .- v_r .* sin.(st.angle)
+            means["v"] = u_r .* sin.(st.angle) .+ v_r .* cos.(st.angle)
+        end
+        spd = sqrt.(means["u"] .^ 2 .+ means["v"] .^ 2)
+
+        for b in keep
+            @printf("  %-9s %-11s %5d recs  %s .. %s   ssh %7.3f  u %7.3f  v %7.3f  T %6.2f  S %6.2f (domain mean)\n",
+                    bins[b].name, bins[b].kind, nrec[b], tfirst[b], tlast[b],
+                    (mean(filter(!isnan, view(means[v], :, :, b))) for v in VARS)...)
+        end
+
+        # save the means (non-empty bins)
+        mkpath(OUT_DIR)
+        ncout = joinpath(OUT_DIR, "$(name)_meanflow_avg.nc")
+        NCDataset(ncout, "c") do ds
+            nx, ny = size(st.lon)
+            defDim(ds, "x", nx); defDim(ds, "y", ny); defDim(ds, "bin", length(keep))
+            ds.attrib["source"] = "$name: $(src.what), $(src.data)"
+            ds.attrib["method"] = "surface means of all records in [bin_start, bin_end); u_east / v_north on rho / parent points"
+            defVar(ds, "lon", st.lon, ("x", "y")); defVar(ds, "lat", st.lat, ("x", "y"))
+            defVar(ds, "bin_name", getfield.(bins[keep], :name), ("bin",))
+            defVar(ds, "bin_kind", string.(getfield.(bins[keep], :kind)), ("bin",))
+            defVar(ds, "bin_start", getfield.(bins[keep], :t0), ("bin",))
+            defVar(ds, "bin_end", getfield.(bins[keep], :t1), ("bin",))
+            defVar(ds, "nrec", nrec[keep], ("bin",))
+            for (v, nm, u) in (("zeta", "zeta", "m"), ("u", "u_east", "m s-1"), ("v", "v_north", "m s-1"),
+                               ("temp", "temp", "degC"), ("salt", "salt", "psu"))
+                defVar(ds, nm, means[v][:, :, keep], ("x", "y", "bin"); attrib = ["units" => u, "_FillValue" => NaN32])
             end
         end
-        isempty(halves) && error("$name: no $v records in [$T0, $T1)")
-        if v == first(vlist)                                            # bins with data (from zeta)
-            keep = [b for b in eachindex(bins) if !isempty(members(halves, bins[b]))]
-            FULL3D && (nc3 = open3d(name, src, st, bins, keep))
-        end
-        surf = fill(NaN32, size(st.lon)..., nb)
-        for (ib, b) in enumerate(keep)
-            hs = members(halves, bins[b]); isempty(hs) && continue
-            m = combine(hs)
-            src.kind == :roms && masknan!(m, v == "u" ? st.mask_u : v == "v" ? st.mask_v : st.mask_rho)
-            nc3 === nothing || write3d!(nc3, v, m, ib)
-            ms = ndims(m) == 2 ? m : view(m, :, :, st.isurf)
-            if src.kind == :roms && v in ("u", "v")                     # to rho points for the maps
-                ms = v == "u" ? u2rho(ms) : v2rho(ms)
-            end
-            v in VARS && (surf[:, :, b] = ms)
-            if v == "u"
-                nrec[b] = sum(h.nrec for h in hs)
-                tfirst[b] = minimum(h.tfirst for h in hs); tlast[b] = maximum(h.tlast for h in hs)
+        println("  saved ", ncout)
+
+        # Section 3: maps for each window
+        ctx = map_ctx(src, st)
+        views = map_views(ctx, st, "surface")
+        zrange = crange(means["zeta"][:, :, keep]; step = 0.05)
+        for window in WINDOWS
+            M = map_M(name, window, src, st, ctx, bins, keep, nrec, tfirst, tlast)
+            for view in views
+                mean_map(means["zeta"], (means["u"], means["v"]), "ssh", view, M; title = "Mean sea-surface height",
+                         label = "ssh [m]", colormap = Reverse(:RdBu), colorrange = zrange)
+                mean_map(means["temp"], (means["u"], means["v"]), "temp", view, M; title = "Mean surface temperature",
+                         label = "T [°C]", colormap = :thermal, colorrange = CLIM.temp)
+                mean_map(means["salt"], (means["u"], means["v"]), "salt", view, M; title = "Mean surface salinity",
+                         label = "S [psu]", colormap = :haline, colorrange = CLIM.salt, lowclip = :black)
+                mean_map(spd, (means["u"], means["v"]), "speed", view, M; title = "Mean surface speed |ū| and velocity",
+                         label = "speed [m s⁻¹]", colormap = :viridis, colorrange = CLIM.speed, uv_color = :white)
             end
         end
-        v in VARS && (means[v] = surf)
-        @printf("  %-6s %6d records, %.1f min\n", v, sum(h.nrec for h in values(halves)), (time() - t0) / 60)
-        halves = nothing; GC.gc()
+        means = nothing; spd = nothing; GC.gc()
+    else                                                                # averaging skipped: bin counts from the record times
+        nrec, tfirst, tlast = bin_counts(bins, rec_times(src, st))
     end
-    if nc3 !== nothing
-        close(nc3); println("  saved ", joinpath(OUT_DIR, "$(name)_meanflow_avg_3d.nc"))
-    end
-    # u, v -> rho points, east / north
-    if src.kind == :roms                                                # already on rho points
-        u_r = means["u"]; v_r = means["v"]
-        means["u"] = u_r .* cos.(st.angle) .- v_r .* sin.(st.angle)
-        means["v"] = u_r .* sin.(st.angle) .+ v_r .* cos.(st.angle)
-    end
-    spd = sqrt.(means["u"] .^ 2 .+ means["v"] .^ 2)
-
-    for b in keep
-        @printf("  %-9s %-11s %5d recs  %s .. %s   ssh %7.3f  u %7.3f  v %7.3f  T %6.2f  S %6.2f (domain mean)\n",
-                bins[b].name, bins[b].kind, nrec[b], tfirst[b], tlast[b],
-                (mean(filter(!isnan, view(means[v], :, :, b))) for v in VARS)...)
-    end
-
-    # save the means (non-empty bins)
-    mkpath(OUT_DIR)
-    ncout = joinpath(OUT_DIR, "$(name)_meanflow_avg.nc")
-    NCDataset(ncout, "c") do ds
-        nx, ny = size(st.lon)
-        defDim(ds, "x", nx); defDim(ds, "y", ny); defDim(ds, "bin", length(keep))
-        ds.attrib["source"] = "$name: $(src.what), $(src.data)"
-        ds.attrib["method"] = "surface means of all records in [bin_start, bin_end); u_east / v_north on rho / parent points"
-        defVar(ds, "lon", st.lon, ("x", "y")); defVar(ds, "lat", st.lat, ("x", "y"))
-        defVar(ds, "bin_name", getfield.(bins[keep], :name), ("bin",))
-        defVar(ds, "bin_kind", string.(getfield.(bins[keep], :kind)), ("bin",))
-        defVar(ds, "bin_start", getfield.(bins[keep], :t0), ("bin",))
-        defVar(ds, "bin_end", getfield.(bins[keep], :t1), ("bin",))
-        defVar(ds, "nrec", nrec[keep], ("bin",))
-        for (v, nm, u) in (("zeta", "zeta", "m"), ("u", "u_east", "m s-1"), ("v", "v_north", "m s-1"),
-                           ("temp", "temp", "degC"), ("salt", "salt", "psu"))
-            defVar(ds, nm, means[v][:, :, keep], ("x", "y", "bin"); attrib = ["units" => u, "_FillValue" => NaN32])
-        end
-    end
-    println("  saved ", ncout)
-
-    # Section 3: maps for each window
-    moor = read_moorings(src.moor)
-    parent = src.kind != :roms
-    hsrc = parent ? G27 : (lon = st.lon, lat = st.lat, h = st.h)
-    edge = parent ? G27.edge : grid_boundary(st.lon, st.lat)
-    views = [
-        (name = "domain", lonlim = extrema(parent ? G27.lon : st.lon), latlim = extrema(parent ? G27.lat : st.lat),
-         sub = "surface", bg = parent ? :white : :gray80, ncom = false),
-        (name = "ncom", lonlim = (-57.39, -27.47), latlim = (-8.63, 21.37), sub = "surface_ncom", bg = :white, ncom = true),
-    ]
-    zrange = crange(means["zeta"][:, :, keep]; step = 0.05)
-    for window in WINDOWS
-        sel = [b for b in keep if bins[b].kind == Symbol(window) || bins[b].kind == :total]
-        M = (; name, window, bins, sel, nrec, dt = src.dt, what = src.what, lon = st.lon, lat = st.lat,
-             hlon = hsrc.lon, hlat = hsrc.lat, h = hsrc.h, edge, moor, parent,
-             dx = dx_km(st.lon, st.lat), tfirst = tfirst[end], tlast = tlast[end])
-        for view in views
-            mean_map(means["zeta"], (means["u"], means["v"]), "ssh", view, M; title = "Mean sea-surface height",
-                     label = "ssh [m]", colormap = Reverse(:RdBu), colorrange = zrange)
-            mean_map(means["temp"], (means["u"], means["v"]), "temp", view, M; title = "Mean surface temperature",
-                     label = "T [°C]", colormap = :thermal, colorrange = CLIM.temp)
-            mean_map(means["salt"], (means["u"], means["v"]), "salt", view, M; title = "Mean surface salinity",
-                     label = "S [psu]", colormap = :haline, colorrange = CLIM.salt, lowclip = :black)
-            mean_map(spd, (means["u"], means["v"]), "speed", view, M; title = "Mean surface speed |ū| and velocity",
-                     label = "speed [m s⁻¹]", colormap = :viridis, colorrange = CLIM.speed, uv_color = :white)
-        end
-    end
-    means = nothing; spd = nothing; st = nothing; GC.gc()
+    !isempty(DEPTHS) && (FULL3D || DEPTH_ONLY) && depth_section(name, src, st, bins, nrec, tfirst, tlast)
+    st = nothing; GC.gc()
     @printf("===== %s done, %.1f min\n", name, (time() - t0) / 60)
 end

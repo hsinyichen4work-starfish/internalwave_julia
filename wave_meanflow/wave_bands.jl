@@ -2,7 +2,8 @@
 Step 5: wave parts at a fixed depth, every hourly record     rho_wave, u_wave, v_wave, zeta_wave
 Step 5b: p_wave from rho_wave (hydrostatic, from the free surface down), every hourly record
 Step 6: three frequency bands of each wave part               <field>_hp28, <field>_bp9_15, <field>_hp9
-        (fields: rho_wave and p_wave from rho; u_wave; v_wave; zeta_wave)
+        (fields: rhoi_wave and p_wave from rhoi (in-situ density, insitu_rho.jl; p_from = "rho" for rho1 instead);
+         rho_wave; u_wave; v_wave; zeta_wave)
 Only the bands are saved; <var>_wave lives in memory between the two steps, one horizontal tile at a time.
 No depth mean is removed here (barotropic / baroclinic split is a later step).
 Needs `using NCDatasets, Dates, Printf, DSP`, function/butter_filters.jl (bandpass_butter, lowhighpass_butter),
@@ -92,18 +93,19 @@ function wave_series_tile(var, ix, jy, win, data_folder, G, xbar, zbar, wts)
     td = win.td; N = size(G.z0, 3)
     x = Array{Float32}(undef, length(ix), length(jy), N, td.nt)
     h = G.h[ix, jy]; z0 = G.z0[ix, jy, :]
-    bg1 = Array{Float32}(undef, length(ix), length(jy), N); bg2 = similar(bg1)
+    bg1 = Array{Float32}(undef, length(ix), length(jy), N); bg2 = similar(bg1); rbuf = similar(bg1)
     for (fi, recs) in records_by_file(td)
         ks = first.(recs); kr = minimum(ks):maximum(ks)
-        blk = NCDataset(d -> d[var].var[ix, jy, :, kr], joinpath(data_folder, td.files[fi]))   # one chunk per record
+        blk = NCDataset(d -> read_his_block(d, var, ix, jy, kr), joinpath(data_folder, td.files[fi]))   # one chunk per record
         for (k, n) in recs
             ζ = view(G.ζ, ix, jy, n)
+            rec = record_of(blk, var, k - first(kr) + 1, rbuf, ζ, h, z0, G.rho0)   # rhoi: in-situ density of the record
             w1, w2, a = wts[n]
             bg_at_depth!(bg1, ζ, h, z0, zbar[w1], xbar[w1])
             if a > 0
                 bg_at_depth!(bg2, ζ, h, z0, zbar[w2], xbar[w2]); bg1 .= (1 - a) .* bg1 .+ a .* bg2
             end
-            @views x[:, :, :, n] .= blk[:, :, :, k - first(kr) + 1] .- bg1
+            @views x[:, :, :, n] .= rec .- bg1
         end
     end
     return x
@@ -142,7 +144,7 @@ end
 # grid of a variable and the ζ series on it: h, z0 (3-D vars), ζ (xi, eta, nt) for the whole span, ζ of each window mean
 function wave_grid(win, data_folder, mean_root, var, grid_file)
     his1 = joinpath(data_folder, win.td.files[1])
-    dnames, sz = NCDataset(ds -> (dimnames(ds[var]), size(ds[var])), his1)
+    dnames, sz, rho0 = NCDataset(ds -> (dimnames(ds[his_name(var)]), size(ds[his_name(var)]), Float64(ds.attrib["rho0"])), his1)
     is3d = length(sz) == 4; g = grid_of(dnames)
     hr = NCDataset(gf -> Float64.(gf["h"].var[:, :]), grid_file)
     hg = to_grid(hr, g)
@@ -151,7 +153,7 @@ function wave_grid(win, data_folder, mean_root, var, grid_file)
                                        window_file(joinpath(mean_root, "zeta_window"), "zeta_window", w, win.t0[w])), g))
             for w in 1:win.nwin]
     z0, dz0 = is3d ? s_stretch(his1, hg) : (nothing, nothing)
-    return (h = Float32.(hg), z0, dz0, ζ, ζbar, is3d, g, dnames, sz)
+    return (h = Float32.(hg), z0, dz0, ζ, ζbar, is3d, g, dnames, sz, rho0)
 end
 
 # window means of var on a tile: xbar[w] (values) and zbar[w] (depths of its levels, from zeta_window)
@@ -166,12 +168,13 @@ end
 # steps 5 (+5b) + 6 for one his variable (rho, u, v or zeta): bands of its wave fields, written per window
 # ---------------------------------------------------------------------------------------------------------------
 function window_wave_bands(win, data_folder, mean_root; var, grid_file, bands = BANDS, order = 4, background = "window",
-                           t_ref = DateTime(1994, 1, 1), verbose = true)
+                           p_from = "rhoi", t_ref = DateTime(1994, 1, 1), verbose = true)
     td = win.td
     his1 = joinpath(data_folder, td.files[1])
     own = wave_owner(win)
     recs_of = [findall(==(w), own) for w in 1:win.nwin]
-    fields = var == "rho" ? ["rho_wave", "p_wave"] : ["$(var)_wave"]   # rho also gives p_wave (step 5b)
+    # p_wave (step 5b) from the density picked by p_from: "rhoi" (in-situ, split EOS) or "rho" (rho1, his rho)
+    fields = var == p_from ? ["$(var)_wave", "p_wave"] : ["$(var)_wave"]
     name(f, b) = "$(f)_$(b.name)"
     fn(f, b, w) = window_file(joinpath(mean_root, name(f, b)), name(f, b), w, win.t0[w])
     done(f, b, w) = window_done(fn(f, b, w), name(f, b), win, w, t_ref; nrec = length(recs_of[w]), t0 = td.tdate[recs_of[w][1]])
@@ -184,9 +187,9 @@ function window_wave_bands(win, data_folder, mean_root; var, grid_file, bands = 
 
     G = wave_grid(win, data_folder, mean_root, var, grid_file)
     dnames, sz, is3d = G.dnames, G.sz, G.is3d
-    vunits = NCDataset(ds -> get(ds[var].attrib, "units", ""), his1)
+    vunits = NCDataset(ds -> get(ds[his_name(var)].attrib, "units", ""), his1)
     units(f) = f == "p_wave" ? "Pa" : vunits
-    tiles, ch = is3d ? var_tiles(his1, var) : ([(1:sz[1], 1:sz[2])], (sz[1], sz[2], 1))
+    tiles, ch = is3d ? var_tiles(his1, his_name(var)) : ([(1:sz[1], 1:sz[2])], (sz[1], sz[2], 1))
     wts = bg_weights(win, background)
 
     # files: created once under .tmp; progress file lists the tiles already written to all of them
@@ -199,11 +202,11 @@ function window_wave_bands(win, data_folder, mean_root; var, grid_file, bands = 
         sec(t) = Dates.value(Millisecond(t - t_ref)) / 1000
         for f in fields, b in bands, w in ws
             mkpath(dirname(fn(f, b, w))); rs = recs_of[w]
-            what = f == "p_wave" ? "hydrostatic pressure of rho_wave (rho minus its window background at fixed depth)" :
+            what = f == "p_wave" ? "hydrostatic pressure of $(var)_wave ($(var == "rhoi" ? "in-situ density of the split EOS" : "his rho = rho1") minus its window background at fixed depth)" :
                                    "$var minus its window background at fixed depth"
             NCDataset(fn(f, b, w) * ".tmp", "c"; attrib = ["title" => "$(name(f, b)): $what, $(b.kind == :band ? "$(b.T[1])-$(b.T[2]) h band-pass" : "$(b.T) h $(b.kind)-pass")",
                                                        "filter" => "Butterworth order $order, filtfilt over the whole span $(td.tdate[1]) .. $(td.tdate[end])",
-                                                       "background" => background, "window" => w,
+                                                       "background" => background, "window" => w, "density" => var,
                                                        "window_length_h" => win.window_length, "window_overlap" => win.window_overlap,
                                                        "created" => string(now())]) do ds
                 for (d, n) in zip(dnames[1:end-1], sz[1:end-1]); defDim(ds, d, n); end
