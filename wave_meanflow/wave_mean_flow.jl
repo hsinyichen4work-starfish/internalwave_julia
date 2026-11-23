@@ -41,6 +41,7 @@ include("/home/hchen54/internalwave_julia/wave_meanflow/mode_projection.jl")   #
 include("/home/hchen54/internalwave_julia/wave_meanflow/wave_bands.jl")        # steps 5-6: rho/u/v/zeta_wave -> hp28, bp9_15, hp9 bands
 include("/home/hchen54/internalwave_julia/wave_meanflow/barotropic.jl")        # step 7: u_bt, v_bt, p_bt per band
 include("/home/hchen54/internalwave_julia/wave_meanflow/baroclinic_modes.jl")  # steps 8-9: u_bc = u_wave − u_bt -> u_n, v_n, p_n
+include("/home/hchen54/internalwave_julia/wave_meanflow/mode_check.jl")        # step 9.5: checks of steps 8-9 (bc depth mean, flux closure)
 
 # ============================================================================
 # (0) directories
@@ -109,7 +110,7 @@ const mean_root = joinpath(out_dir, @sprintf("L%gh_ov%.2f", WINDOW_LENGTH, WINDO
 # 8-9 baroclinic part -> modal amplitudes);
 # default all.
 # Batch: the per-variable array runs "2" (each task its own variable), then "3,4" and "5" (per variable) after it.
-const STEPS = parse.(Int, split(get(ENV, "WMF_STEPS", "2,3,4,5,7,9"), ","))
+const STEPS = parse.(Float64, split(get(ENV, "WMF_STEPS", "2,3,4,5,7,9"), ","))   # 9.5 (checks) only when asked
 2 in STEPS && (mean_files = window_means(win, data_folder, mean_root, VARS; windows = WINDOWS, grid_file))   # done windows skipped
 
 # ============================================================================
@@ -178,4 +179,15 @@ if 9 in STEPS
     modal_files = Dict("$(f)_n_$(b.name)" => window_modal(win, data_folder, mean_root; field = f, band = b, grid_file,
                                                          nmode = NMODE, windows = WINDOWS)
                        for f in MODAL_FIELDS for b in MODAL_BANDS)
+end
+
+# ============================================================================
+# (9.5) mode checks (mode_check.jl), not in the default steps: WMF_STEPS=9.5 (reads all 3-D bands again)
+# ============================================================================
+# (1) |(1/H) ∫ f_bc dz| / rms(f_bc) ~ 0 for f = p, u, v, every column and record
+# (2) energy flux ⟨∫ p_bc u_bc dz⟩ (and v) vs Σn H⟨p_n u_n⟩: differ only by the flux in modes > NMODE
+# -> mean_root/modecheck_<band>/: flux maps per window + modecheck_<band>_summary.txt. WMF_MODAL_BANDS picks bands.
+if 9.5 in STEPS
+    check_files = Dict(b.name => window_mode_check(win, data_folder, mean_root; band = b, grid_file, nmode = NMODE,
+                                                   windows = WINDOWS) for b in MODAL_BANDS)
 end
