@@ -43,6 +43,8 @@ include("/home/hchen54/internalwave_julia/wave_meanflow/wave_bands.jl")        #
 include("/home/hchen54/internalwave_julia/wave_meanflow/barotropic.jl")        # step 7: u_bt, v_bt, p_bt per band
 include("/home/hchen54/internalwave_julia/wave_meanflow/baroclinic_modes.jl")  # steps 8-9: u_bc = u_wave − u_bt -> u_n, v_n, p_n
 include("/home/hchen54/internalwave_julia/wave_meanflow/mode_check.jl")        # step 9.5: checks of steps 8-9 (bc depth mean, flux closure)
+include("/home/hchen54/internalwave_julia/wave_meanflow/gradients.jl")         # prep for An / Rn: rho_spacing, hor_deriv, ddz_*, grad2d, mode0
+include("/home/hchen54/internalwave_julia/wave_meanflow/Ans.jl")               # step 10: An terms (An1 .. An5)
 
 # ============================================================================
 # (0) directories
@@ -116,7 +118,7 @@ println("$(win.nwin) windows")
 const WINDOWS  = haskey(ENV, "WMF_WINDOWS") ? vec(collect(eval(Meta.parse(ENV["WMF_WINDOWS"])))) : collect(1:win.nwin)
 const mean_root = joinpath(out_dir, @sprintf("L%gh_ov%.2f", WINDOW_LENGTH, WINDOW_OVERLAP))   # one folder per variable
 # WMF_STEPS = "2,5" runs only those sections (2 means, 3 B/N², 4 modes, 5-6 wave parts + bands, 7 barotropic part,
-# 8-9 baroclinic part -> modal amplitudes);
+# 8-9 baroclinic part -> modal amplitudes, 9.5 mode checks, 10 An terms);
 # default all.
 # Batch: the per-variable array runs "2" (each task its own variable), then "3,4" and "5" (per variable) after it.
 const STEPS = parse.(Float64, split(get(ENV, "WMF_STEPS", "2,3,4,5,7,9"), ","))   # 9.5 (checks) only when asked
@@ -201,4 +203,20 @@ end
 if 9.5 in STEPS
     check_files = Dict(b.name => window_mode_check(win, data_folder, mean_root; band = b, grid_file, nmode = NMODE,
                                                    windows = WINDOWS) for b in MODAL_BANDS)
+end
+
+# ============================================================================
+# (10) wave - mean flow energy terms between modes m, n = 0..NMODE (Ans.jl; tools in gradients.jl)
+# ============================================================================
+# An1 = −ρ0 ⟨∫ un φn (U·∇)(um φm) dz⟩: advection of wave KE by the background U, V (anrn_matlab/An1.m)
+# An2 = ρ0 ⟨um un + vm vn⟩ (1/cm²) ∫ N² W Φm φn dz: vertical advection by the background W (An2.m)
+# An3 = −1/(ρ0 cm² cn²) ⟨pn (U·∇) pm⟩ ∫ N² Φm Φn dz: advection of wave APE by the background U, V (An3.m)
+# An4 = −1/(ρ0 cm² cn²) ⟨pm pn⟩ ∫ W ∂z(N² Φm) Φn dz: vertical advection of wave APE by the background W (An4.m)
+# An5 = 2⟨pm pn⟩/(ρ0 cm³ cn²) (∇cm·∫ U N² Φm Φn dz): APE advection through the horizontal change of cm (An5.m)
+# per window mean, mode 0 = barotropic (u_bt, v_bt). -> mean_root/<term>_<band>/ (xi_rho, eta_rho, mode_m, mode_n) [W m-2]
+# WMF_AN_TERMS = "An1,An2,An3,An4,An5" (default), WMF_MODAL_BANDS the bands, WMF_WINDOWS the windows. Needs steps 2, 3, 4, 7, 9.
+const AN_TERM_LIST = String.(split(get(ENV, "WMF_AN_TERMS", "An1,An2,An3,An4,An5"), ","))
+if 10 in STEPS
+    an_files = Dict(b.name => window_An(win, data_folder, mean_root; band = b, terms = AN_TERM_LIST, grid_file,
+                                        nmode = NMODE, windows = WINDOWS) for b in MODAL_BANDS)
 end
