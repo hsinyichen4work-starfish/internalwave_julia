@@ -282,10 +282,19 @@ println("\nsaved ", csvname)
 end
 const sim_header = "var,bin,reference,model,r,E_centred_rms,E_hat,B_model_minus_ref,sigma_model,sigma_ref"
 
-# one figure per variable: one panel per metric, rows = reference, columns = model, value written in each cell
+# one figure per variable: one panel per metric, rows = reference, columns = model, value written in each cell.
+# plot_sim_table is the generic part (also used for the transect and the moorings): S[metric] = (reference, model)
+# matrix, info = (; name, unit), σo[ref] = std of the reference (footer), `where` = how the statistics were taken
 function plot_similarity(v)
-    info, S = var_info[v], sim[v]
-    metrics = v == "zeta" ? ["r", "E", "Ehat"] : ["r", "E", "Ehat", "B"]
+    info = var_info[v]
+    C = common[v]; w = tgt.area[C] ./ sum(tgt.area[C])
+    σo = Dict(ref => sqrt(sum(w .* (fld[v][ref][C] .- sum(w .* fld[v][ref][C])) .^ 2)) for ref in refs)
+    plot_sim_table(sim[v], info, v == "zeta" ? ["r", "E", "Ehat"] : ["r", "E", "Ehat", "B"], σo,
+                   "Similarity of the mean $(info.name) ($bin_sel) to HYCOM and to GLORYS\n" *
+                   "ROMS 2700m grid, area weighted; ROMS H / G: ROMS 2700m with HYCOM / GLORYS parent",
+                   "spatial std", joinpath(outdir, "similarity_$(v)_$(bin_sel).png"))
+end
+function plot_sim_table(S, info, metrics, σo, title, σname, fname)
     metric_title = Dict("r" => "pattern correlation r", "E" => "centred RMS diff. E′ ($(info.unit))",
                         "Ehat" => "normalised E′ (Ê)", "B" => "mean diff. B = model − ref ($(info.unit))")
     fig = Figure(; figkw(18, 4.2 * cld(length(metrics), 2) + 1.5)..., figure_padding = (4, 8, 4, 4))
@@ -311,27 +320,28 @@ function plot_similarity(v)
         end
         Colorbar(fig[r_, 2c_], hm; width = 7)
     end
-    Label(fig[0, :], "Similarity of the mean $(info.name) ($bin_sel) to HYCOM and to GLORYS\n" *
-          "ROMS 2700m grid, area weighted; ROMS H / G: ROMS 2700m with HYCOM / GLORYS parent",
-          fontsize = 10, tellwidth = false)
-    # spatial std σ_o of each reference (area weighted, common mask): the scale for E′. A model with the same σ
+    Label(fig[0, :], title, fontsize = 10, tellwidth = false)
+    # std σ_o of each reference (same weights and points as the statistics): the scale for E′. A model with the same σ
     # gives E′ = 0 if identical, √2 σ_o if uncorrelated (r = 0), 2 σ_o if anti-correlated (r = -1)
-    C = common[v]; w = tgt.area[C] ./ sum(tgt.area[C])
     fmt(x) = string(round(x, sigdigits = 3))
-    σtxt = join(["ref $(short_of[ref]): σ_o = $(fmt(σo)), √2 σ_o = $(fmt(sqrt(2) * σo)), 2 σ_o = $(fmt(2σo)) $(info.unit)"
-                 for ref in refs for σo in (sqrt(sum(w .* (fld[v][ref][C] .- sum(w .* fld[v][ref][C])) .^ 2)),)], "\n")
-    Label(fig[cld(length(metrics), 2) + 1, :], σtxt * "\nσ_o: spatial std of the reference; E′ = √2 σ_o for an " *
+    σtxt = join(["ref $(short_of[ref]): σ_o = $(fmt(σo[ref])), √2 σ_o = $(fmt(sqrt(2) * σo[ref])), 2 σ_o = $(fmt(2σo[ref])) $(info.unit)"
+                 for ref in refs], "\n")
+    Label(fig[cld(length(metrics), 2) + 1, :], σtxt * "\nσ_o: $σname of the reference; E′ = √2 σ_o for an " *
           "uncorrelated field of the same σ, 2 σ_o for an anti-correlated one",
           fontsize = 8, halign = :left, justification = :left, tellwidth = false)
     rowgap!(fig.layout, 6); colgap!(fig.layout, 4)
-    fname = joinpath(outdir, "similarity_$(v)_$(bin_sel).png")
     figsave(fname, fig)
     println("saved ", fname)
 end
 
 ## ===== 4. summary over the variables: r and Ê of every comparison =====
 # rows = comparison (model vs reference), columns = variable
-function plot_summary()
+plot_summary() = plot_summary_table(sim, vars,
+    "Similarity to HYCOM (top 4 rows) and to GLORYS (bottom 4 rows)\n" *
+    "mean surface fields $bin_sel on the ROMS 2700m grid, area weighted\n" *
+    "ROMS H / G: ROMS 2700m with HYCOM / GLORYS parent; black: outside the colour range",
+    joinpath(outdir, "similarity_summary_$(bin_sel).png"))
+function plot_summary_table(sim, vars, title, fname)
     pairs = [(ref, key) for ref in refs for key in cmp_keys if key != ref]
     rowlab = ["$(short_of[k]) vs $(short_of[r])" for (r, k) in pairs]
     fig = Figure(; figkw(18, 0.75 * length(pairs) + 3.5)..., figure_padding = (4, 8, 4, 4))
@@ -352,12 +362,8 @@ function plot_summary()
         hlines!(ax, [length(cmp_keys) - 0.5]; color = :white, linewidth = 2)   # HYCOM | GLORYS reference
         Colorbar(fig[1, 2c], hm; width = 7)
     end
-    Label(fig[0, :], "Similarity to HYCOM (top 4 rows) and to GLORYS (bottom 4 rows)\n" *
-          "mean surface fields $bin_sel on the ROMS 2700m grid, area weighted\n" *
-          "ROMS H / G: ROMS 2700m with HYCOM / GLORYS parent; black: outside the colour range",
-          fontsize = 9, tellwidth = false)
+    Label(fig[0, :], title, fontsize = 9, tellwidth = false)
     colgap!(fig.layout, 4)
-    fname = joinpath(outdir, "similarity_summary_$(bin_sel).png")
     figsave(fname, fig)
     println("saved ", fname)
 end
@@ -409,7 +415,11 @@ function compute_vc()
     println("saved ", csvname)
 end
 
-function plot_vc()
+plot_vc() = plot_vc_table(VC,
+    "Complex (vector) correlation of the mean surface velocity ($bin_sel) with HYCOM and with GLORYS\n" *
+    "ROMS 2700m grid, area weighted; ROMS H / G: ROMS 2700m with HYCOM / GLORYS parent",
+    joinpath(outdir, "vector_correlation_$(bin_sel).png"))
+function plot_vc_table(VC, title, fname)
     fig = Figure(; figkw(18, 4.2 * 2 + 2.5)..., figure_padding = (4, 8, 4, 4))
     for (n, m) in enumerate(vc_metrics)
         M = VC[m]
@@ -431,37 +441,12 @@ function plot_vc()
         end
         Colorbar(fig[r_, 2c_], hm; width = 7)
     end
-    Label(fig[0, :], "Complex (vector) correlation of the mean surface velocity ($bin_sel) with HYCOM and with GLORYS\n" *
-          "ROMS 2700m grid, area weighted; ROMS H / G: ROMS 2700m with HYCOM / GLORYS parent", fontsize = 10, tellwidth = false)
+    Label(fig[0, :], title, fontsize = 10, tellwidth = false)
     Label(fig[3, :], "w = u + iv, ρ = ⟨a b*⟩ / √(⟨|a|²⟩⟨|b|²⟩), a = model, b = reference, means not removed (Kundu 1976)\n" *
           "θ > 0: the model's flow is rotated counterclockwise from the reference's; g = ⟨a b*⟩ / ⟨|b|²⟩, arg g = θ",
           fontsize = 8, halign = :left, justification = :left, tellwidth = false)
     rowgap!(fig.layout, 6); colgap!(fig.layout, 4)
-    fname = joinpath(outdir, "vector_correlation_$(bin_sel).png")
     figsave(fname, fig)
-    println("saved ", fname)
-end
-
-## ===== run every bin =====
-function run_bin(b)
-    load_bin!(b)
-    compute_similarity()
-    for v in vars
-        plot_maps(v)
-        plot_similarity(v)
-    end
-    plot_maps("speed"; quiver = true)    # the speed maps again, with the mean velocity arrows
-    plot_summary()
-    compute_vc()
-    plot_vc()
-end
-foreach(run_bin, bins)
-
-## ===== 6. all bins together =====
-for (name, header, rows) in (("similarity_all_bins.csv", sim_header, all_sim_rows),
-                             ("vector_correlation_all_bins.csv", vc_header, all_vc_rows))
-    fname = joinpath(figure_path, name)
-    open(io -> (println(io, header); foreach(r -> println(io, r), rows)), fname, "w")
     println("saved ", fname)
 end
 
@@ -504,6 +489,29 @@ function plot_timeseries(getM, rowkeys, rowlabel, title, fname; ylims = nothing)
 end
 
 
+## ===== run every bin =====
+function run_bin(b)
+    load_bin!(b)
+    compute_similarity()
+    for v in vars
+        plot_maps(v)
+        plot_similarity(v)
+    end
+    plot_maps("speed"; quiver = true)    # the speed maps again, with the mean velocity arrows
+    plot_summary()
+    compute_vc()
+    plot_vc()
+end
+foreach(run_bin, bins)
+
+## ===== 6. all bins together =====
+for (name, header, rows) in (("similarity_all_bins.csv", sim_header, all_sim_rows),
+                             ("vector_correlation_all_bins.csv", vc_header, all_vc_rows))
+    fname = joinpath(figure_path, name)
+    open(io -> (println(io, header); foreach(r -> println(io, r), rows)), fname, "w")
+    println("saved ", fname)
+end
+
 unit_of(v) = var_info[v].unit
 plot_timeseries((S, V, b, v) -> S[b][v]["r"], vars, v -> "r  ($v)", "Pattern correlation r with HYCOM and with GLORYS\nmean surface fields on the ROMS 2700m grid, Sep–Nov 2022",
                 "timeseries_r.png")
@@ -521,3 +529,506 @@ plot_timeseries((S, V, b, m) -> V[b][m], ["absρ", "θ", "absg"],
 
 
 ###========mooring loc / transect comp=============
+# Half-month / month means at the moorings and on the M1 -> CPIES7 transect, made by
+#   ROMS, CMEMS: mooring/mooring_halfmonth_avg.jl (windows averaged from the extracted time series)
+#   HYCOM, NCOM: mooring/mooring_from_meanflow3d.jl (3-D window means interpolated to the points)
+# in moor_dir/<src>/halfmonth_avg/<src>_<station>_avg.nc. Every file is on the same z grid (-1000:5:0 m, up) and
+# the same transect points, but the windows differ by source (some also have 2022-08-01_15), so a bin is
+# found by its label. In Julia the arrays are (z, win) at a mooring and (z, x, win) on the transect.
+moor_dir      = "/home/hsinyi/roms_data/mooring_extract"
+moor_src      = Dict("NCOM" => "NCOM2700")          # model key => mooring_extract folder (if not the key)
+moor_stations = ["french", "M1", "M2", "M3", "M4", (["CPIES$i" for i in 1:9])...]
+moor_vars     = ["temp", "salt", "u", "v"]           # (z, win) at a mooring; plus ssh (win)
+tran_vars     = ["temp", "salt", "u", "v", "u_along", "u_cross"]   # (z, x, win); plus ssh (x, win)
+
+moor_file(key, name) = (s = get(moor_src, key, key); joinpath(moor_dir, s, "halfmonth_avg", "$(s)_$(name)_avg.nc"))
+
+# bin name of the surface files -> window label of the mooring files: "09-01–15" -> "2022-09-01_15", "2022-09" as is
+win_label_of(bin) = occursin('–', bin) ? "2022-" * replace(bin, '–' => '_') : bin
+
+nanf(A) = Float64.(nomissing(A, NaN))
+# speed = |ū| = √(ū² + v̄²) of the mean velocity in the window (as for the surface), added to a record
+with_speed(d) = merge(d, (; speed = hypot.(d.u, d.v)))
+
+"""
+    read_mooring(key, station) -> (; key, station, lon, lat, h, z, win, temp, salt, u, v, ssh, n_time)
+
+All windows of model `key` at `station`; `win` = window labels, profiles (z, win), ssh (win).
+"""
+function read_mooring(key, station)
+    f = moor_file(key, station)
+    NCDataset(f) do ds
+        (; key, station, file = f, lon = ds["lon"][], lat = ds["lat"][], h = ds["h"][],
+           z = Float64.(ds["z"][:]), win = String.(ds["win_label"][:]), n_time = Int.(ds["n_time"][:]),
+           ssh = nanf(ds["ssh"][:]),
+           (Symbol(v) => nanf(ds[v][:, :]) for v in moor_vars)...)
+    end |> with_speed
+end
+
+"""
+    read_transect(key) -> (; key, lon, lat, dist, h, z, mooring, mooring_dist, win, n_time, temp, ..., u_cross, ssh)
+
+All windows of model `key` on the M1 -> CPIES7 transect; sections (z, x, win), ssh and h along x.
+CMEMS keeps the transect ssh in <src>_M1_CPIES7_ssh_avg.nc (its own windows, matched by label).
+"""
+function read_transect(key)
+    f = moor_file(key, "M1_CPIES7")
+    NCDataset(f) do ds
+        win = String.(ds["win_label"][:])
+        ssh = if haskey(ds, "ssh")
+            nanf(ds["ssh"][:, :])
+        else
+            NCDataset(moor_file(key, "M1_CPIES7_ssh")) do ds2
+                w2 = String.(ds2["win_label"][:]); s2 = nanf(ds2["ssh"][:, :])
+                S = fill(NaN, size(s2, 1), length(win))
+                for (j, w) in enumerate(win)
+                    k = findfirst(==(w), w2); k === nothing || (S[:, j] = s2[:, k])
+                end
+                S
+            end
+        end
+        (; key, file = f, lon = Float64.(ds["lon"][:]), lat = Float64.(ds["lat"][:]), dist = Float64.(ds["dist"][:]),
+           h = Float64.(ds["h"][:]), z = Float64.(ds["z"][:]), angle = ds["angle"][],
+           mooring = String.(ds["mooring"][:]), mooring_dist = Float64.(ds["mooring_dist"][:]),
+           win, n_time = Int.(ds["n_time"][:]), ssh,
+           (Symbol(v) => nanf(ds[v][:, :, :]) for v in tran_vars)...)
+    end |> with_speed
+end
+
+# index of `bin` in the windows of a mooring / transect record d
+function win_index(d, bin)
+    k = findfirst(==(win_label_of(bin)), d.win)
+    k === nothing && error("$(d.key): no window $(win_label_of(bin)) for bin $bin (has $(join(d.win, ", ")))")
+    return k
+end
+
+"""
+    moor_at(d, bin) -> NamedTuple of d with every windowed field cut to bin (profiles (z), ssh scalar /
+    sections (z, x), ssh (x)); the coordinates are kept.
+"""
+function moor_at(d, bin)
+    k = win_index(d, bin)
+    cut(A::AbstractVector) = A[k]
+    cut(A::AbstractMatrix) = A[:, k]
+    cut(A::AbstractArray{<:Any, 3}) = A[:, :, k]
+    flds = (:ssh, :n_time, :speed, Symbol.(moor_vars)..., Symbol.(tran_vars)...)
+    return (; (n => (n in flds ? cut(getfield(d, n)) : getfield(d, n)) for n in keys(d))...)
+end
+
+moor = Dict(key => Dict(st => read_mooring(key, st) for st in moor_stations) for (key, _) in models)   # moor[key][station]
+tran = Dict(key => read_transect(key) for (key, _) in models)                                         # tran[key]
+
+# the comparison needs one z grid and one set of transect points
+let k0 = first(models)[1]
+    for (key, _) in models, st in moor_stations
+        moor[key][st].z == moor[k0][st].z || error("$key $st: z differs from $k0")
+    end
+    for (key, _) in models
+        tran[key].z == tran[k0].z && isapprox(tran[key].dist, tran[k0].dist) || error("$key transect: z / dist differ from $k0")
+    end
+end
+let missing_bins = [(key, b) for (key, _) in models, b in bins if !(win_label_of(b) in tran[key].win)]
+    isempty(missing_bins) || error("bins without a window: $missing_bins")
+end
+println("mooring data: ", join(moor_stations, ", "), " and the M1_CPIES7 transect for ", join(first.(models), ", "))
+
+## ===== 7. moorings and transect: every model vs HYCOM and vs GLORYS, per bin =====
+# Output per bin in figure_path/<bin>/mooring_transect/; all bins in figure_path/{mooring,transect}_*_all_bins.csv.
+# (7a) moorings: scatter of model vs reference over every station and depth (marker = station, colour = depth) and
+#      the statistics of section 3b over those points (equal weights; "all" stations together and each station)
+# (7b) transect M1 -> CPIES7: sections (x = along-transect distance, y = depth) of every model and their spread
+# (7c) transect: r, E′, Ê, B of section 3b on the (l, z) section (equal weights: l every 1 km, z every 5 m) and the
+#      complex correlation of section 5 for (u, v) (a rotation to (u_along, u_cross) does not change ρ)
+# The statistics and the scatter are done for each depth layer in zlayers (0-1000 m and 0-300 m).
+mt_info = Dict(
+    "temp"    => (name = "temperature",            unit = "°C",  cmap = :thermal, crange = (4.0, 30.0),  spread = (0.0, 1.5), levels = 5:5:25),
+    "salt"    => (name = "salinity",               unit = "psu", cmap = :haline,  crange = (33.0, 37.0), spread = (0.0, 0.5), levels = 35:0.5:36.5),
+    "u"       => (name = "eastward velocity u",    unit = "m/s", cmap = :balance, crange = (-1.2, 1.2),  spread = (0.0, 0.3), levels = [0.0]),
+    "v"       => (name = "northward velocity v",   unit = "m/s", cmap = :balance, crange = (-1.2, 1.2),  spread = (0.0, 0.3), levels = [0.0]),
+    "speed"   => (name = "speed |ū| (of the mean velocity)", unit = "m/s", cmap = :viridis, crange = (0.0, 1.5), spread = (0.0, 0.3), levels = 0.25:0.25:1.0),
+    "u_along" => (name = "along-transect velocity (+ toward CPIES7)",            unit = "m/s", cmap = :balance, crange = (-1.2, 1.2), spread = (0.0, 0.3), levels = [0.0]),
+    "u_cross" => (name = "cross-transect velocity (+ 90° left of along, ≈ NW)", unit = "m/s", cmap = :balance, crange = (-1.2, 1.2), spread = (0.0, 0.3), levels = [0.0]),
+)
+mcmp_vars = ["temp", "salt", "u", "v", "speed"]                    # at the moorings
+tcmp_vars = ["temp", "salt", "u_along", "u_cross", "speed"]        # on the transect
+station_marker = Dict(zip(moor_stations, [:circle, :rect, :utriangle, :dtriangle, :diamond, :pentagon, :hexagon,
+                                          :star5, :cross, :xcross, :ltriangle, :rtriangle, :star4, :star8]))
+# depth layers for the statistics and the scatter: the whole extracted column, and the upper 300 m only (where the
+# models differ most: plume, mixed layer, thermocline, internal tides). The deep water is alike in every model and
+# would raise the skill of the 0-1000 m statistics. Layer = name => z_min; z_min <= z <= 0.
+zlayers = ["0-1000m" => -1000.0, "0-300m" => -300.0]
+depth_cmap = Reverse(:deep)
+const msim_header = "layer,var,bin,station,reference,model,n_points,r,E_centred_rms,E_hat,B_model_minus_ref,rmse,sigma_model,sigma_ref"
+const tsim_header = "layer,var,bin,reference,model,n_points,r,E_centred_rms,E_hat,B_model_minus_ref,rmse,sigma_model,sigma_ref"
+const tvc_header  = "layer," * vc_header
+all_msim_rows, all_tsim_rows, all_tvc_rows = String[], String[], String[]
+all_msim_d, all_tsim_d, all_tvc_d = Dict{String,Any}(), Dict{String,Any}(), Dict{String,Any}()   # bin => msim / tsim / TVC
+eqw(n) = fill(1 / n, n)
+simrow(s, n) = (n, round(s.r, digits = 4), round(s.E, sigdigits = 4), round(s.Ehat, digits = 4), round(s.B, sigdigits = 4),
+                round(sqrt(s.E^2 + s.B^2), sigdigits = 4), round(s.σm, sigdigits = 4), round(s.σr, sigdigits = 4))
+non_refs(ref) = [k for k in cmp_keys if k != ref]
+zrange_txt(zmin) = "z = 0 .. $(round(Int, zmin)) m"
+
+# per bin (globals): mout, M[key][station] / T[key] = the records cut to bin_sel
+function load_moor_bin!(b)
+    global bin_sel = b
+    global mout = joinpath(figure_path, b, "mooring_transect"); mkpath(mout)
+    global M = Dict(key => Dict(st => moor_at(moor[key][st], b) for st in moor_stations) for key in cmp_keys)
+    global T = Dict(key => moor_at(tran[key], b) for key in cmp_keys)
+    println("\n========== moorings / transect, bin $b (window $(win_label_of(b))) ==========")
+end
+
+# the stacked (station, depth) points of a variable with zmin <= z: values per model, station index and z;
+# only points where every model has a value
+function moor_points(v, zmin)
+    zs = moor[cmp_keys[1]][moor_stations[1]].z
+    X = Dict(key => reduce(vcat, [getfield(M[key][st], Symbol(v)) for st in moor_stations]) for key in cmp_keys)
+    S = reduce(vcat, [fill(i, length(zs)) for i in eachindex(moor_stations)])
+    Z = repeat(zs, length(moor_stations))
+    ok = reduce(.&, [isfinite.(X[key]) for key in cmp_keys]) .& (Z .>= zmin)
+    return (; X = Dict(k => x[ok] for (k, x) in X), S = S[ok], Z = Z[ok])
+end
+
+## (7a) moorings; msim[layer][var][metric] = (reference, model) matrix, mσo[layer][var][ref] = std of the reference
+function compute_moor_similarity()
+    global msim = Dict{String,Any}(); global mσo = Dict{String,Any}()
+    rows = String[]
+    for (lay, zmin) in zlayers
+        println("moorings ($(length(moor_stations)) stations, $(zrange_txt(zmin))), equal weights:")
+        msim[lay] = Dict{String,Dict{String,Matrix{Float64}}}(); mσo[lay] = Dict{String,Dict{String,Float64}}()
+        for v in mcmp_vars
+            P = moor_points(v, zmin)
+            msim[lay][v] = Dict(m => fill(NaN, length(refs), length(cmp_keys)) for m in ("r", "E", "Ehat", "B"))
+            mσo[lay][v] = Dict(ref => std(P.X[ref]; corrected = false) for ref in refs)
+            for (a, ref) in enumerate(refs), (c, key) in enumerate(cmp_keys)
+                key == ref && continue
+                s = similarity(P.X[key], P.X[ref], eqw(length(P.S)))
+                for m in keys(msim[lay][v]); msim[lay][v][m][a, c] = getfield(s, Symbol(m)); end
+                push!(rows, join((lay, v, bin_sel, "all", ref, key, simrow(s, length(P.S))...), ","))
+                println("  ", rpad(v, 6), rpad("$(short_of[key]) vs $(short_of[ref])", 18), " r = ", rpad(round(s.r, digits = 3), 6),
+                        " E′ = ", rpad(round(s.E, sigdigits = 3), 7), " Ê = ", rpad(round(s.Ehat, digits = 3), 6), " B = ", round(s.B, sigdigits = 3))
+                for (i, st) in enumerate(moor_stations)                     # every station on its own (its profile)
+                    k = P.S .== i
+                    count(k) > 2 || continue
+                    si = similarity(P.X[key][k], P.X[ref][k], eqw(count(k)))
+                    push!(rows, join((lay, v, bin_sel, st, ref, key, simrow(si, count(k))...), ","))
+                end
+            end
+        end
+    end
+    all_msim_d[bin_sel] = msim
+    fname = joinpath(mout, "mooring_similarity_$(bin_sel).csv")
+    open(io -> (println(io, msim_header); foreach(r -> println(io, r), rows)), fname, "w")
+    append!(all_msim_rows, rows)
+    println("saved ", fname)
+end
+
+# one figure per reference and layer: rows = variable, columns = the other models; marker = station, colour = depth, dashed 1:1
+function plot_moor_scatter(ref, lay, zmin)
+    others = non_refs(ref)
+    fig = Figure(; figkw(18, 23.5)..., figure_padding = (4, 8, 4, 4))
+    local sc
+    for (r, v) in enumerate(mcmp_vars), (c, key) in enumerate(others)
+        P = moor_points(v, zmin)
+        x, y = P.X[ref], P.X[key]
+        lo, hi = extrema(vcat(x, y)); pad = 0.04 * (hi - lo); lims = (lo - pad, hi + pad)
+        ax = Axis(fig[r, c]; title = r == 1 ? short_of[key] : "", titlesize = 9, titlegap = 2, aspect = 1,
+                  xlabel = r == length(mcmp_vars) ? "$(short_of[ref])" : "", ylabel = c == 1 ? "$v ($(mt_info[v].unit))\nmodel" : "",
+                  xlabelsize = 8, ylabelsize = 8, xticklabelsize = 7, yticklabelsize = 7, limits = (lims, lims))
+        ablines!(ax, 0, 1; color = :black, linestyle = :dash, linewidth = 0.7)
+        for (i, st) in enumerate(moor_stations)
+            k = P.S .== i
+            sc = scatter!(ax, x[k], y[k]; marker = station_marker[st], color = P.Z[k], colormap = depth_cmap,
+                          colorrange = (zmin, 0.0), markersize = 4, strokewidth = 0)
+        end
+        a, b = findfirst(==(ref), refs), findfirst(==(key), cmp_keys)
+        S = msim[lay][v]
+        text!(ax, 0.03, 0.97; space = :relative, align = (:left, :top), fontsize = 6,
+              text = "r = $(round(S["r"][a, b], digits = 3))\nÊ = $(round(S["Ehat"][a, b], digits = 2))\n" *
+                     "B = $(round(S["B"][a, b], sigdigits = 2))")
+    end
+    Colorbar(fig[1:length(mcmp_vars), length(others) + 1], sc; label = "depth z (m)", width = 8)
+    Legend(fig[length(mcmp_vars) + 1, 1:length(others)],
+           [MarkerElement(marker = station_marker[st], color = :grey30, markersize = 7, strokewidth = 0) for st in moor_stations],
+           moor_stations; orientation = :horizontal, nbanks = 2, labelsize = 7, framevisible = false, patchsize = (8, 8), colgap = 6)
+    Label(fig[0, :], "Mean profiles at the moorings ($bin_sel), every model vs $(short_of[ref]) (x axis), layer $lay\n" *
+          "every station, $(zrange_txt(zmin)) every 5 m; dashed: 1:1; r, Ê, B over these points (B = model − ref)",
+          fontsize = 9, tellwidth = false)
+    rowgap!(fig.layout, 4); colgap!(fig.layout, 4)
+    fname = joinpath(mout, "mooring_scatter_ref$(short_of[ref])_$(lay)_$(bin_sel).png")
+    figsave(fname, fig)
+    println("saved ", fname)
+end
+
+## (7b) transect sections (the whole 0-1000 m; dashed: the bottom of the 0-300 m layer)
+function plot_transect(v)
+    info = mt_info[v]
+    t0 = T[cmp_keys[1]]
+    F = Dict(key => getfield(T[key], Symbol(v)) for key in cmp_keys)              # (z, x)
+    spread = std(cat((F[k] for k in cmp_keys)...; dims = 3); dims = 3, corrected = true)[:, :, 1]
+    panels = vcat([(F[k], short_of[k] * " — " * l, info.cmap, info.crange) for (k, l) in models],
+                  [(spread, "spread between the models (std)", :amp, info.spread)])
+    fig = Figure(; figkw(18, 14)..., figure_padding = (4, 8, 4, 4))
+    for (n, (A, title, cmap, crange)) in enumerate(panels)
+        r, c = fldmod1(n, 2)
+        ax = Axis(fig[r, c]; title = title, titlesize = 8, titlegap = 2, xticklabelsize = 7, yticklabelsize = 7,
+                  xlabel = r == 3 ? "distance from M1 along the transect (km)" : "", ylabel = c == 1 ? "z (m)" : "",
+                  xlabelsize = 8, ylabelsize = 8, limits = (extrema(t0.dist), (-1000, 0)))
+        h = heatmap!(ax, t0.dist, t0.z, A'; colormap = cmap, colorrange = crange, nan_color = :gray80)
+        n <= length(models) && contour!(ax, t0.dist, t0.z, A'; levels = info.levels, color = :black, linewidth = 0.5)
+        vlines!(ax, t0.mooring_dist; color = :grey40, linewidth = 0.4, linestyle = :dot)
+        hlines!(ax, [last(zl) for zl in zlayers if last(zl) > -1000]; color = :white, linewidth = 0.8, linestyle = :dash)
+        if r == 1    # mooring names on a top axis (title moved above them)
+            ax.title = ""
+            axt = Axis(fig[r, c]; xaxisposition = :top, xticks = (t0.mooring_dist, t0.mooring), xticklabelsize = 6,
+                       xticklabelrotation = π / 4, xticksize = 2, title = title, titlesize = 8, titlegap = 2,
+                       limits = (extrema(t0.dist), (-1000, 0)))
+            hidespines!(axt); hideydecorations!(axt); axt.xgridvisible = false
+            linkxaxes!(ax, axt)
+        end
+        (c == 2 || n == length(panels)) && Colorbar(fig[r, 3], h; label = n == length(panels) ? "std ($(info.unit))" : "$v ($(info.unit))",
+                                                    width = 7, labelsize = 8, ticklabelsize = 7)
+        r < 3 && hidexdecorations!(ax; ticks = false, grid = false)
+        c > 1 && hideydecorations!(ax; ticks = false, grid = false)
+    end
+    Label(fig[0, :], "Mean $(info.name) $bin_sel on the transect M1 → CPIES7 (azimuth $(round(Int, 90 - t0.angle))° from N)\n" *
+          "dotted: the moorings on the line; white dashed: 300 m; black: contours " * join(string.(info.levels), ", "),
+          fontsize = 9, tellwidth = false)
+    rowgap!(fig.layout, 4); colgap!(fig.layout, 4); colgap!(fig.layout, 1, 14)
+    fname = joinpath(mout, "transect_$(v)_$(bin_sel).png")
+    figsave(fname, fig)
+    println("saved ", fname)
+end
+
+## (7c) transect statistics per layer; tsim[layer][var][metric], tσo[layer][var][ref], TVC[layer][metric]
+function compute_transect_similarity()
+    global tsim = Dict{String,Any}(); global tσo = Dict{String,Any}(); global TVC = Dict{String,Any}()
+    rows, vrows = String[], String[]
+    t0 = T[cmp_keys[1]]
+    Zs = repeat(t0.z, length(t0.dist))                       # z of vec((z, x))
+    for (lay, zmin) in zlayers
+        println("transect (l, z), $(zrange_txt(zmin)), equal weights:")
+        inz = Zs .>= zmin
+        tsim[lay] = Dict{String,Dict{String,Matrix{Float64}}}(); tσo[lay] = Dict{String,Dict{String,Float64}}()
+        for v in tcmp_vars
+            F = Dict(key => vec(getfield(T[key], Symbol(v))) for key in cmp_keys)
+            ok = reduce(.&, [isfinite.(F[k]) for k in cmp_keys]) .& inz; n = count(ok)
+            tsim[lay][v] = Dict(m => fill(NaN, length(refs), length(cmp_keys)) for m in ("r", "E", "Ehat", "B"))
+            tσo[lay][v] = Dict(ref => std(F[ref][ok]; corrected = false) for ref in refs)
+            for (a, ref) in enumerate(refs), (c, key) in enumerate(cmp_keys)
+                key == ref && continue
+                s = similarity(F[key][ok], F[ref][ok], eqw(n))
+                for m in keys(tsim[lay][v]); tsim[lay][v][m][a, c] = getfield(s, Symbol(m)); end
+                push!(rows, join((lay, v, bin_sel, ref, key, simrow(s, n)...), ","))
+                println("  ", rpad(v, 8), rpad("$(short_of[key]) vs $(short_of[ref])", 18), " r = ", rpad(round(s.r, digits = 3), 6),
+                        " E′ = ", rpad(round(s.E, sigdigits = 3), 7), " Ê = ", rpad(round(s.Ehat, digits = 3), 6), " B = ", round(s.B, sigdigits = 3))
+            end
+        end
+        # complex correlation of (u, v) on the section
+        TVC[lay] = Dict(m => fill(NaN, length(refs), length(cmp_keys)) for m in vc_metrics)
+        U = Dict(k => vec(T[k].u) for k in cmp_keys); V = Dict(k => vec(T[k].v) for k in cmp_keys)
+        ok = reduce(.&, [isfinite.(U[k]) .& isfinite.(V[k]) for k in cmp_keys]) .& inz; w = eqw(count(ok))
+        for (a, ref) in enumerate(refs), (c, key) in enumerate(cmp_keys)
+            key == ref && continue
+            s = vector_corr(U[key][ok], V[key][ok], U[ref][ok], V[ref][ok], w)
+            for m in vc_metrics; TVC[lay][m][a, c] = getfield(s, Symbol(m)); end
+            push!(vrows, join((lay, bin_sel, ref, key, round(s.absρ, digits = 4), round(s.θ, digits = 2), round(s.reρ, digits = 4),
+                               round(s.absg, digits = 4)), ","))
+        end
+    end
+    all_tsim_d[bin_sel] = tsim; all_tvc_d[bin_sel] = TVC
+    for (name, header, rr, all_rr) in (("transect_similarity", tsim_header, rows, all_tsim_rows),
+                                       ("transect_vector_correlation", tvc_header, vrows, all_tvc_rows))
+        fname = joinpath(mout, "$(name)_$(bin_sel).csv")
+        open(io -> (println(io, header); foreach(r -> println(io, r), rr)), fname, "w")
+        append!(all_rr, rr)
+        println("saved ", fname)
+    end
+end
+
+where_moor(zmin) = "every mooring station, $(zrange_txt(zmin)) every 5 m, equal weights"
+where_tran(zmin) = "transect M1 → CPIES7, l every 1 km, $(zrange_txt(zmin)) every 5 m, equal weights"
+function plot_moor_transect_stats()
+    for (lay, zmin) in zlayers
+        for v in mcmp_vars
+            plot_sim_table(msim[lay][v], mt_info[v], ["r", "E", "Ehat", "B"], mσo[lay][v],
+                "Similarity of the mean $(mt_info[v].name) at the moorings ($bin_sel, $lay) to HYCOM and to GLORYS\n$(where_moor(zmin))",
+                "std over the points", joinpath(mout, "mooring_similarity_$(v)_$(lay)_$(bin_sel).png"))
+        end
+        for v in tcmp_vars
+            plot_sim_table(tsim[lay][v], mt_info[v], ["r", "E", "Ehat", "B"], tσo[lay][v],
+                "Similarity of the mean $(mt_info[v].name) on the transect ($bin_sel, $lay) to HYCOM and to GLORYS\n$(where_tran(zmin))",
+                "std over the section", joinpath(mout, "transect_similarity_$(v)_$(lay)_$(bin_sel).png"))
+        end
+        plot_summary_table(msim[lay], mcmp_vars, "Similarity to HYCOM (top 4 rows) and to GLORYS (bottom 4 rows), moorings $bin_sel, $lay\n" *
+            "$(where_moor(zmin))\nblack: outside the colour range", joinpath(mout, "mooring_similarity_summary_$(lay)_$(bin_sel).png"))
+        plot_summary_table(tsim[lay], tcmp_vars, "Similarity to HYCOM (top 4 rows) and to GLORYS (bottom 4 rows), transect $bin_sel, $lay\n" *
+            "$(where_tran(zmin))\nblack: outside the colour range", joinpath(mout, "transect_similarity_summary_$(lay)_$(bin_sel).png"))
+        plot_vc_table(TVC[lay], "Complex (vector) correlation of the mean velocity on the transect ($bin_sel, $lay) with HYCOM and with GLORYS\n$(where_tran(zmin))",
+                      joinpath(mout, "transect_vector_correlation_$(lay)_$(bin_sel).png"))
+    end
+    println("saved the similarity tables in ", mout)
+end
+
+## (7d) r² by depth: at every depth z, the correlation r between model and reference over the horizontal points
+# (the 330 transect points along l, or the 14 moorings); y = z, x = r², one line per model.
+# r² does not show the sign: an anti-correlated depth (r < 0) is marked with an open circle. r by depth in the CSV.
+prof_color = Dict(k => Makie.wong_colors()[n] for (n, k) in enumerate(cmp_keys))   # as model_color in section 6
+function r_by_depth(kind, v, key, ref)
+    if kind == :transect
+        A, B = getfield(T[key], Symbol(v)), getfield(T[ref], Symbol(v))          # (z, x)
+        cols = [(A[i, :], B[i, :]) for i in axes(A, 1)]
+    else
+        A = reduce(hcat, [getfield(M[key][st], Symbol(v)) for st in moor_stations])  # (z, station)
+        B = reduce(hcat, [getfield(M[ref][st], Symbol(v)) for st in moor_stations])
+        cols = [(A[i, :], B[i, :]) for i in axes(A, 1)]
+    end
+    return [begin
+                ok = isfinite.(a) .& isfinite.(b)
+                count(ok) > 2 && std(a[ok]) > 0 && std(b[ok]) > 0 ? cor(a[ok], b[ok]) : NaN
+            end for (a, b) in cols]
+end
+function plot_r2_profile(kind)
+    vlist = kind == :transect ? tcmp_vars : mcmp_vars
+    z = kind == :transect ? T[cmp_keys[1]].z : moor[cmp_keys[1]][moor_stations[1]].z
+    rows = String[]
+    fig = Figure(; figkw(18, 13)..., figure_padding = (4, 8, 4, 4))
+    for (a, ref) in enumerate(refs), (c, v) in enumerate(vlist)
+        ax = Axis(fig[a, c]; title = a == 1 ? v : "", titlesize = 9, titlegap = 2, limits = ((0, 1), (-1000, 0)),
+                  xlabel = a == length(refs) ? "r²" : "", ylabel = c == 1 ? "z (m)\nref $(short_of[ref])" : "",
+                  xlabelsize = 8, ylabelsize = 8, xticklabelsize = 7, yticklabelsize = 7, xticks = ([0, 0.5, 1], ["0", "0.5", "1"]))
+        hlines!(ax, [last(zl) for zl in zlayers if last(zl) > -1000]; color = :grey50, linewidth = 0.6, linestyle = :dash)
+        for key in non_refs(ref)
+            r = r_by_depth(kind, v, key, ref)
+            lines!(ax, r .^ 2, z; color = prof_color[key], linewidth = 1.2, label = short_of[key])
+            neg = (r .< 0) .& (mod.(eachindex(z), 4) .== 1)          # every 4th level (20 m) is enough to show it
+            any(neg) && scatter!(ax, r[neg] .^ 2, z[neg]; color = :transparent, strokecolor = prof_color[key],
+                                 strokewidth = 0.6, markersize = 3)
+            append!(rows, [join((v, bin_sel, ref, key, z[i], round(r[i], digits = 4)), ",") for i in eachindex(z)])
+        end
+        a < length(refs) && hidexdecorations!(ax; ticks = false, grid = false)
+        c > 1 && hideydecorations!(ax; ticks = false, grid = false)
+    end
+    Legend(fig[length(refs) + 1, :], [LineElement(color = prof_color[k], linewidth = 1.5) for k in cmp_keys],
+           [short_of[k] for k in cmp_keys]; orientation = :horizontal, labelsize = 8, framevisible = false)
+    what = kind == :transect ? "over the $(length(T[cmp_keys[1]].dist)) transect points (M1 → CPIES7) at each depth" :
+                               "over the $(length(moor_stations)) moorings at each depth"
+    Label(fig[0, :], "r² of the mean fields ($bin_sel) with HYCOM (top) and with GLORYS (bottom)\n" *
+          "r $what; open circle: r < 0; dashed: 300 m", fontsize = 9, tellwidth = false)
+    rowgap!(fig.layout, 4); colgap!(fig.layout, 4)
+    fname = joinpath(mout, "$(kind)_r2_by_depth_$(bin_sel).png")
+    figsave(fname, fig)
+    cname = joinpath(mout, "$(kind)_r_by_depth_$(bin_sel).csv")
+    open(io -> (println(io, "var,bin,reference,model,z,r"); foreach(r -> println(io, r), rows)), cname, "w")
+    append!(kind == :transect ? all_tr_rows : all_mr_rows, rows)
+    println("saved ", fname, " and ", cname)
+end
+all_tr_rows, all_mr_rows = String[], String[]
+
+## (7e) r² along the transect: at every transect point l, r between model and reference over depth (its profile, within
+# the layer); line = the 330 transect points, markers = the moorings on the line from their own files (u_along, u_cross
+# rotated from u, v by the transect angle). Open marker: r < 0. One figure per layer.
+function moor_profile(key, st, v, angle)
+    d = M[key][st]
+    v == "u_along" && return d.u .* cosd(angle) .+ d.v .* sind(angle)
+    v == "u_cross" && return .-d.u .* sind(angle) .+ d.v .* cosd(angle)
+    return getfield(d, Symbol(v))
+end
+function cor_ok(a, b)
+    ok = isfinite.(a) .& isfinite.(b)
+    count(ok) > 2 && std(a[ok]) > 0 && std(b[ok]) > 0 ? cor(a[ok], b[ok]) : NaN
+end
+function plot_r2_along(lay, zmin)
+    t0 = T[cmp_keys[1]]
+    iz = t0.z .>= zmin
+    mz = moor[cmp_keys[1]][moor_stations[1]].z .>= zmin
+    rows = String[]
+    fig = Figure(; figkw(18, 12)..., figure_padding = (4, 8, 4, 4))
+    for (a, ref) in enumerate(refs), (c, v) in enumerate(tcmp_vars)
+        ax = Axis(fig[a, c]; title = a == 1 ? v : "", titlesize = 9, titlegap = 2, limits = (extrema(t0.dist), (0, 1)),
+                  ylabel = c == 1 ? "r²\nref $(short_of[ref])" : "", ylabelsize = 8, yticklabelsize = 7,
+                  xticks = (t0.mooring_dist, t0.mooring), xticklabelrotation = π / 3, xticklabelsize = 6,
+                  yticks = ([0, 0.5, 1], ["0", "0.5", "1"]))
+        for key in non_refs(ref)
+            A, B = getfield(T[key], Symbol(v)), getfield(T[ref], Symbol(v))
+            r = [cor_ok(A[iz, i], B[iz, i]) for i in axes(A, 2)]
+            lines!(ax, t0.dist, r .^ 2; color = prof_color[key], linewidth = 1.0)
+            rm = [cor_ok(moor_profile(key, st, v, t0.angle)[mz], moor_profile(ref, st, v, t0.angle)[mz]) for st in t0.mooring]
+            pos = .!(rm .< 0)
+            scatter!(ax, t0.mooring_dist[pos], rm[pos] .^ 2; color = prof_color[key], markersize = 5, strokewidth = 0)
+            any(.!pos) && scatter!(ax, t0.mooring_dist[.!pos], rm[.!pos] .^ 2; color = :white, strokecolor = prof_color[key],
+                                   strokewidth = 0.8, markersize = 5)
+            append!(rows, [join((lay, v, bin_sel, ref, key, "transect", "", round(t0.dist[i], digits = 2), round(r[i], digits = 4)), ",")
+                           for i in eachindex(r)])
+            append!(rows, [join((lay, v, bin_sel, ref, key, "mooring", st, round(t0.mooring_dist[j], digits = 2), round(rm[j], digits = 4)), ",")
+                           for (j, st) in enumerate(t0.mooring)])
+        end
+        a < length(refs) && hidexdecorations!(ax; ticks = false, grid = false)
+        c > 1 && hideydecorations!(ax; ticks = false, grid = false)
+    end
+    Legend(fig[length(refs) + 1, :], [LineElement(color = prof_color[k], linewidth = 1.5) for k in cmp_keys],
+           [short_of[k] for k in cmp_keys]; orientation = :horizontal, labelsize = 8, framevisible = false)
+    Label(fig[0, :], "r² of the mean profiles ($bin_sel, $lay) along the transect M1 → CPIES7\nwith HYCOM (top) and with GLORYS (bottom)\n" *
+          "r over depth ($(zrange_txt(zmin))) at each point; line: transect points, markers: the moorings (open: r < 0)",
+          fontsize = 9, tellwidth = false)
+    rowgap!(fig.layout, 4); colgap!(fig.layout, 4)
+    fname = joinpath(mout, "transect_r2_along_$(lay)_$(bin_sel).png")
+    figsave(fname, fig)
+    println("saved ", fname)
+    return rows
+end
+const along_header = "layer,var,bin,reference,model,source,station,dist_km,r"
+all_along_rows = String[]
+function plot_r2_along_all()
+    rows = reduce(vcat, [plot_r2_along(lay, zmin) for (lay, zmin) in zlayers])
+    fname = joinpath(mout, "transect_r_along_$(bin_sel).csv")
+    open(io -> (println(io, along_header); foreach(r -> println(io, r), rows)), fname, "w")
+    append!(all_along_rows, rows)
+    println("saved ", fname)
+end
+
+function run_moor_bin(b)
+    load_moor_bin!(b)
+    compute_moor_similarity()
+    for ref in refs, (lay, zmin) in zlayers
+        plot_moor_scatter(ref, lay, zmin)
+    end
+    foreach(plot_transect, tcmp_vars)
+    compute_transect_similarity()
+    plot_moor_transect_stats()
+    plot_r2_profile(:transect); plot_r2_profile(:mooring)
+    plot_r2_along_all()
+end
+foreach(run_moor_bin, bins)
+
+for (name, header, rows) in (("mooring_similarity_all_bins.csv", msim_header, all_msim_rows),
+                             ("transect_similarity_all_bins.csv", tsim_header, all_tsim_rows),
+                             ("transect_vector_correlation_all_bins.csv", tvc_header, all_tvc_rows),
+                             ("transect_r_by_depth_all_bins.csv", "var,bin,reference,model,z,r", all_tr_rows),
+                             ("mooring_r_by_depth_all_bins.csv", "var,bin,reference,model,z,r", all_mr_rows),
+                             ("transect_r_along_all_bins.csv", along_header, all_along_rows))
+    fname = joinpath(figure_path, name)
+    open(io -> (println(io, header); foreach(r -> println(io, r), rows)), fname, "w")
+    println("saved ", fname)
+end
+
+## (7f) time series over the bins of the transect / mooring statistics for the layers in ts_layers (as in section 6)
+ts_layers = ["0-300m"]
+mt_unit(v) = mt_info[v].unit
+for lay in ts_layers
+    zt = zrange_txt(Dict(zlayers)[lay])
+    for (m, name) in (("r", "Pattern correlation r"), ("Ehat", "Normalised centred RMS difference Ê"),
+                      ("E", "Centred RMS difference E′"), ("B", "Mean difference B = model − reference"))
+        lab = m in ("r", "Ehat") ? (v -> "$(m == "r" ? "r" : "Ê")  ($v)") : (v -> "$(m == "E" ? "E′" : "B") ($v, $(mt_unit(v)))")
+        plot_timeseries((S, V, b, v) -> all_tsim_d[b][lay][v][m], tcmp_vars, lab,
+                        "$name with HYCOM and with GLORYS\nmean fields on the transect M1 → CPIES7, $zt",
+                        "transect_timeseries_$(m)_$(lay).png")
+        m in ("r", "Ehat") && plot_timeseries((S, V, b, v) -> all_msim_d[b][lay][v][m], mcmp_vars, lab,
+                        "$name with HYCOM and with GLORYS\nmean profiles at the $(length(moor_stations)) moorings, $zt",
+                        "mooring_timeseries_$(m)_$(lay).png")
+    end
+    plot_timeseries((S, V, b, k) -> all_tvc_d[b][lay][k], ["absρ", "θ", "absg"],
+                    k -> Dict("absρ" => "|ρ|", "θ" => "θ (°, ccw)", "absg" => "|g|")[k],
+                    "Complex correlation of the mean velocity (Kundu 1976) with HYCOM and with GLORYS\n" *
+                    "on the transect M1 → CPIES7, $zt", "transect_timeseries_vector_correlation_$(lay).png")
+end
