@@ -25,7 +25,8 @@ using NCDatasets, Printf, Statistics, Dates, LinearAlgebra
 include(joinpath(@__DIR__, "tidal_models_setup.jl"))
 for f in ("time_dir.jl", "data_load.jl", "harm_fit.jl"); include(P.func * f); end   # time_dir, data_load, harm_fit
 
-const MARGIN = 0.3                                       # deg around the target grid read from HYCOM / NCOM
+BLAS.set_num_threads(1)   # the fit matrices are tiny; many OpenBLAS threads can hang near the login node's 8 GB limit
+const MARGIN = 0.3                                      # deg around the target grid read from HYCOM / NCOM
 println("host $HOST, sources $(join(SRC_RUN, ", ")), window $T0 .. $T1, stride $STRIDE")
 
 ## target box: lon (-180..180) / lat extent of the 2700 m ROMS grid
@@ -76,10 +77,11 @@ function read_hn(src)
     for (q, tag) in enumerate(sort(collect(keys(bytag))))
         NCDataset(fname(tag, "ssh")) do ds
             ks = first.(bytag[tag])
-            blk = ds["ssh"].var[I, J, minimum(ks):maximum(ks)]
+            blk = ds["ssh"].var[Is, Js, minimum(ks):maximum(ks)]       # strided read: only the points used
             for (k, n) in bytag[tag]
-                ssh[:, :, n] .= nanbig.(view(blk, 1:STRIDE:length(I), 1:STRIDE:length(J), k - minimum(ks) + 1))
+                ssh[:, :, n] .= nanbig.(view(blk, :, :, k - minimum(ks) + 1))
             end
+            blk = nothing
         end
         q % 20 == 0 && @printf("  %d / %d files, %.1f min\n", q, length(bytag), (time() - t0) / 60)
     end
@@ -93,6 +95,7 @@ function run_fit(sname)
     src = SOURCES[sname]; t_start = time()
     println("===== $sname: $(src.label)")
     d = src.kind == :roms ? read_roms(src) : read_hn(src)
+    GC.gc()                                              # free the read buffers before the fit
     nt = length(d.tsec); dt = diff(d.tsec) ./ 3600
     tdate = T_REF .+ Millisecond.(round.(Int, 1000 .* d.tsec))
     @printf("%d records %s .. %s, dt %.2f..%.2f h, %d points (%d wet)\n", nt, tdate[1], tdate[end], extrema(dt)...,
