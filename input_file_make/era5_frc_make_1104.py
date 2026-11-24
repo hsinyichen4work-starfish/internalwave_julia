@@ -31,9 +31,14 @@ from netCDF4 import Dataset, num2date
 from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import distance_transform_edt
 
-era5 = "/expanse/lustre/projects/uso102/hchen54/ERA5_DATA/"
-grdfile = "/expanse/lustre/projects/uso102/hchen54/new_design_fix/roms_grd_2700m_1104.nc"
-outdir = "/expanse/lustre/projects/uso102/hchen54/new_design_cmems/frc_era5/"
+if os.path.isdir("/expanse/lustre"):        # Expanse
+    era5 = "/expanse/lustre/projects/uso102/hchen54/ERA5_DATA/"
+    grdfile = "/expanse/lustre/projects/uso102/hchen54/new_design_fix/roms_grd_2700m_1104.nc"
+    outdir = "/expanse/lustre/projects/uso102/hchen54/new_design_cmems/frc_era5/"
+else:                                       # aurelia
+    era5 = "/home/hsinyi/roms_data/ERA5_DATA/"
+    grdfile = "/home/hsinyi/roms_data/new_design_fix/roms_grd_2700m_1104.nc"
+    outdir = "/home/hsinyi/roms_data/new_design_fix/frc_era5/"
 prefix = "roms_era5_frc_2700m_1104_"
 days = [dt.datetime(2022, 8, 1) + dt.timedelta(days=i) for i in range(122)]   # 08-01 .. 11-30
 t_epoch = dt.datetime(1994, 1, 1)

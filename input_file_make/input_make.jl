@@ -21,7 +21,7 @@ using .InputNC
 
 ##
 # child grid: an existing, already smoothed grid file (no grid build here)
-grid_path = "/home/hsinyi/roms_data/new_design/"
+grid_path = "/home/hsinyi/roms_data/new_design_fix/"   # was new_design/ (renamed)
 grd_name = "roms_grd_2700m_1104"          # file grid_path/grd_name.nc
 run_tag = "2700m_1104"                    # used in the ini/bry/frc file names
 parent_datatype = "HYCOM"   # "NCOM" OR "HYCOM" (ocean parent for ini + bry)
@@ -33,12 +33,16 @@ chd_ang = "rad"; chdscoord = "new2008"   # child 'new' or 'old' type scoord
 ndomx = 2; ndomy = 2     # -> chunking needed to avoid OOM.
 # ndomx = 4; ndomy = 4   # -> chunking needed to avoid OOM.
 
-dating = Date(2022, 8, 22):Day(1):Date(2022, 11, 30)
+# HYCOM run starts 2022-08-02 for a longer spin-up (HYCOM subset starts at the 2022080112 cycle).
+# NCOM data, and so the NCOM forcing, only start 2022-08-22: earlier days get no frc file
+# here, so the HYCOM run takes its surface forcing from ERA5 (era5_frc_make_1104.py).
+# Earlier setup: dating = Date(2022, 8, 22):Day(1):Date(2022, 11, 30), par_name = "2022082200"
+dating = Date(2022, 8, 2):Day(1):Date(2022, 11, 30)
 
 ## path settings
 parent_data_path = "/home/mbui/ModelOutput/NCOM/data/"
 hycom_data_path = "/home/mbui/ModelOutput/NCOM/HYCOM_data/subset/"
-par_name = "2022082200"; ini_par_path = parent_data_path * par_name
+par_name = Dates.format(DateTime(first(dating)), "yyyymmddHH"); ini_par_path = parent_data_path * par_name
 # intermediate parent NetCDF files. NCOM (also used by the forcing step):
 nc_path_ncom = "/home/hsinyi/roms_data/NCOM_DATA_NC_2700/"
 nc_path_frc = nc_path_ncom
@@ -102,6 +106,10 @@ end
 cfg_ncom = merge(cfg, (; parent_datatype = "NCOM", nc_path_ini_bry = nc_path_ncom))
 for folder_num in eachindex(fod)
     global par_name = fod[folder_num]
+    if !isdir(joinpath(parent_data_path, par_name))   # no NCOM cycle (before 2022-08-22)
+        println("no NCOM data for $par_name: no frc", is_hycom ? "" : "/bry", " file")
+        continue
+    end
     if !is_hycom
         bry_filename = "roms_bry_$(run_tag)$(src_tag)_$(par_name).nc"   # bry filename
         if !isfile(joinpath(boundary_path, bry_filename))
