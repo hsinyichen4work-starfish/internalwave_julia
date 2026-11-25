@@ -123,7 +123,7 @@ for (c, (rn, R)) in enumerate(regions[1:2])
     barplot!(ax2, repeat(1:NM, NMODE), vec(w); dodge = repeat(1:NMODE, inner = NM), color = repeat(mcol, inner = NM), strokewidth = 0)
 end
 Legend(fig[3, 1:2], [PolyElement(color = mcol[q]) for q in 1:NMODE], ["mode $q" for q in 1:NMODE]; orientation = :horizontal, framevisible = false)
-Label(fig[0, 1:2], "$CON internal tide from the vertical-mode harmonic fit (E = HKE + APE), common area on the ROMS 2700 m grid", fontsize = 10, tellwidth = false)
+Label(fig[0, 1:2], "$CON internal tide from the vertical-mode harmonic fit (E = HKE + APE)\ncommon area on the ROMS 2700 m grid", fontsize = 10, tellwidth = false)
 figsave(OUTP * "m2_modes_energy$(SFX).png", fig); println("wrote ", OUTP * "m2_modes_energy$(SFX).png")
 
 ## --- maps
@@ -137,7 +137,7 @@ function decor!(a)
 end
 qs = 1:min(NMODE, 3)
 for (kind, fname) in ((:F, "m2_modes_flux_maps"), (:E, "m2_modes_E_maps"))
-    figm = Figure(; figkw(18, 3.6NM + 2.6)...)
+    figm = Figure(; figkw(18, 4.4NM + 2.4)...)
     for (c, q) in enumerate(qs)
         X = [kind == :F ? hypot.(d.Fx[:, :, q], d.Fy[:, :, q]) : d.E[:, :, q] for d in D]
         top = quantile(filter(isfinite, reduce(vcat, [x[MC] for x in X])), 0.99)
@@ -148,11 +148,11 @@ for (kind, fname) in ((:F, "m2_modes_flux_maps"), (:E, "m2_modes_E_maps"))
             hm = heatmap!(a, lonv, latv, rg(ifelse.(tg.mask, X[r], NaN)); colormap = :inferno, colorrange = (0, top), highclip = :white, nan_color = RGBf(0.85, 0.85, 0.85))
             decor!(a)
             if kind == :F                                     # arrows on a coarse subset of the target grid
-                sk = max(1, round(Int, 18 / STRIDE)); ii = 1:sk:NX; jj = 1:sk:NY
+                sk = max(1, round(Int, 40 / STRIDE)); ii = 1:sk:NX; jj = 1:sk:NY
                 fx = d.Fx[ii, jj, q]; fy = d.Fy[ii, jj, q]; keep = vec(isfinite.(fx) .& (hypot.(fx, fy) .> 0.05top))
                 xs = vec(tg.lon[ii, jj])[keep]; ys = vec(tg.lat[ii, jj])[keep]
-                sc = 0.9 / top                                 # deg per W/m (arrow of length 0.9 deg = top)
-                arrows2d!(a, xs, ys, sc .* vec(fx)[keep], sc .* vec(fy)[keep]; color = :cyan, shaftwidth = 0.8, tipwidth = 3.5, tiplength = 3.5)
+                sc = 0.6 / top                                 # deg per W/m (arrow of length 0.6 deg = top)
+                any(keep) && arrows2d!(a, xs, ys, sc .* vec(fx)[keep], sc .* vec(fy)[keep]; color = :cyan, shaftwidth = 0.6, tipwidth = 3, tiplength = 3)   # none for a model without tides (GLORYS)
             end
         end
         Colorbar(figm[NM + 1, c], hm; vertical = false, flipaxis = false, height = 7, ticklabelsize = 7,
